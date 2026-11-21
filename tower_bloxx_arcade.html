@@ -1,0 +1,2838 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#0F4C81">
+    <title>TOWER BLOXX — City Bloxx 2005</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+            touch-action: manipulation;
+        }
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #0B3960;
+            font-family: 'Arial Black', 'Impact', 'Trebuchet MS', Arial, sans-serif;
+        }
+        #gameCanvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        /**
+         * TOWER BLOXX (CITY BLOXX) — Classic 2005 J2ME / Digital Chocolate Style
+         * 100% Canvas-rendered classic arcade UI (no modern glass/blur/emoji web widgets).
+         * Features:
+         *  - Classic Title Screen with swinging crane demo & bold 2005 arcade logo
+         *  - 4 Building Tiers (Blue 10fl, Red 15fl, Green 20fl, Yellow 25fl) with strict neighbor rules
+         *  - Standard Roof vs GOLDEN ROOF (x2 Population) mechanic with visual center target zone
+         *  - Parachuting citizens lighting up apartment windows on arrival
+         *  - 5x5 Isometric/2.5D City Grid with roads, cars, pedestrians, golden roof glints & localStorage save
+         *  - Retro J2ME chiptune procedural audio via Web Audio API
+         */
+        (() => {
+            // =========================================================
+            // 1. CANVAS & RESPONSIVE DPR SETUP
+            // =========================================================
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+            let W = window.innerWidth;
+            let H = window.innerHeight;
+            let dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+            function resizeCanvas() {
+                W = window.innerWidth;
+                H = window.innerHeight;
+                dpr = Math.min(window.devicePixelRatio || 1, 2);
+                canvas.width = Math.floor(W * dpr);
+                canvas.height = Math.floor(H * dpr);
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            }
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+
+            // =========================================================
+            // 2. RETRO 2005 J2ME CHIPTUNE AUDIO (WEB AUDIO API)
+            // =========================================================
+            const sfx = {
+                ctx: null,
+                muted: false,
+                init() {
+                    if (!this.ctx) {
+                        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                        if (AudioCtx) this.ctx = new AudioCtx();
+                    }
+                    if (this.ctx && this.ctx.state === 'suspended') {
+                        this.ctx.resume().catch(() => {});
+                    }
+                },
+                toggleMute() {
+                    this.muted = !this.muted;
+                },
+                tone(freq, type, duration, vol = 0.14, delay = 0, slideTo = null) {
+                    if (this.muted || !this.ctx) return;
+                    try {
+                        const t0 = this.ctx.currentTime + delay;
+                        const osc = this.ctx.createOscillator();
+                        const gain = this.ctx.createGain();
+                        osc.type = type;
+                        osc.frequency.setValueAtTime(freq, t0);
+                        if (slideTo) {
+                            osc.frequency.exponentialRampToValueAtTime(slideTo, t0 + duration);
+                        }
+                        gain.gain.setValueAtTime(vol, t0);
+                        gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
+                        osc.connect(gain);
+                        gain.connect(this.ctx.destination);
+                        osc.start(t0);
+                        osc.stop(t0 + duration + 0.01);
+                    } catch (e) {}
+                },
+                click() {
+                    this.tone(660, 'square', 0.055, 0.10);
+                },
+                drop() {
+                    this.tone(360, 'triangle', 0.11, 0.13, 0, 170);
+                },
+                land() {
+                    this.tone(150, 'square', 0.09, 0.16, 0, 75);
+                },
+                crumble() {
+                    this.tone(190, 'sawtooth', 0.13, 0.16, 0, 70);
+                    this.tone(130, 'square', 0.16, 0.14, 0.04, 52);
+                },
+                perfect(combo) {
+                    const base = 523.25 * Math.pow(1.06, Math.min(combo, 7));
+                    this.tone(base, 'square', 0.08, 0.13, 0);
+                    this.tone(base * 1.25, 'square', 0.08, 0.13, 0.06);
+                    this.tone(base * 1.5, 'square', 0.14, 0.15, 0.12);
+                },
+                standardRoof() {
+                    this.tone(440, 'square', 0.10, 0.14, 0);
+                    this.tone(554.37, 'square', 0.10, 0.14, 0.08);
+                    this.tone(659.25, 'square', 0.22, 0.16, 0.16);
+                },
+                goldenRoof() {
+                    const notes = [523.25, 659.25, 783.99, 1046.5, 1318.5];
+                    notes.forEach((n, idx) => {
+                        this.tone(n, 'square', 0.14, 0.16, idx * 0.075);
+                    });
+                },
+                chuteLand() {
+                    this.tone(880, 'triangle', 0.06, 0.07, 0, 1180);
+                },
+                miss() {
+                    this.tone(240, 'sawtooth', 0.18, 0.18, 0, 85);
+                    this.tone(170, 'sawtooth', 0.24, 0.18, 0.12, 60);
+                },
+                cityPlace(isGolden) {
+                    this.tone(392, 'square', 0.09, 0.14, 0);
+                    this.tone(523.25, 'square', 0.10, 0.14, 0.07);
+                    this.tone(659.25, 'square', 0.12, 0.15, 0.14);
+                    if (isGolden) {
+                        this.tone(1046.5, 'square', 0.22, 0.16, 0.22);
+                    }
+                }
+            };
+
+            // =========================================================
+            // 3. CLASSIC 2005 BUILDING TIERS & CITY CONSTANTS
+            // =========================================================
+            const GRID_SIZE = 5;
+            const STORAGE_KEY = 'tower_bloxx_2005_city_v1';
+
+            const BUILDING_TYPES = {
+                blue: {
+                    id: 'blue',
+                    name: 'ЖИЛОЙ ДОМ',
+                    subtitle: '10 ЭТАЖЕЙ • БАЗОВЫЙ',
+                    ruleShort: 'ЛЮБОЙ СВОБОДНЫЙ УЧАСТОК',
+                    floors: 10,
+                    multiplier: 1.0,
+                    unlockPop: 0,
+                    wall: '#2979FF',
+                    wallLight: '#82B1FF',
+                    wallDark: '#1565C0',
+                    roof: '#0D47A1',
+                    roofLight: '#448AFF',
+                    trim: '#E3F2FD',
+                    windowOff: '#102A43',
+                    windowLit: '#FFF176'
+                },
+                red: {
+                    id: 'red',
+                    name: 'ТОРГОВЫЙ ДОМ',
+                    subtitle: '15 ЭТАЖЕЙ • БОНУС x1.5',
+                    ruleShort: 'РЯДОМ С СИНИМ ДОМОМ',
+                    floors: 15,
+                    multiplier: 1.5,
+                    unlockPop: 150,
+                    wall: '#E53935',
+                    wallLight: '#FF8A80',
+                    wallDark: '#B71C1C',
+                    roof: '#7F0000',
+                    roofLight: '#FF5252',
+                    trim: '#FFEBEE',
+                    windowOff: '#2B0909',
+                    windowLit: '#FFF59D'
+                },
+                green: {
+                    id: 'green',
+                    name: 'ОФИСНЫЙ ЦЕНТР',
+                    subtitle: '20 ЭТАЖЕЙ • БОНУС x2.0',
+                    ruleShort: 'РЯДОМ С СИНИМ И КРАСНЫМ',
+                    floors: 20,
+                    multiplier: 2.0,
+                    unlockPop: 600,
+                    wall: '#00A859',
+                    wallLight: '#69F0AE',
+                    wallDark: '#006937',
+                    roof: '#004D26',
+                    roofLight: '#00E676',
+                    trim: '#E8F5E9',
+                    windowOff: '#062617',
+                    windowLit: '#FFFF8D'
+                },
+                yellow: {
+                    id: 'yellow',
+                    name: 'МЕГА-БАШНЯ',
+                    subtitle: '25 ЭТАЖЕЙ • БОНУС x3.0',
+                    ruleShort: 'РЯДОМ С СИНИМ, КРАСНЫМ, ЗЕЛ.',
+                    floors: 25,
+                    multiplier: 3.0,
+                    unlockPop: 1500,
+                    wall: '#FFB300',
+                    wallLight: '#FFE57F',
+                    wallDark: '#E65100',
+                    roof: '#BF360C',
+                    roofLight: '#FFD740',
+                    trim: '#FFFDE7',
+                    windowOff: '#2E1A05',
+                    windowLit: '#FFFFFF'
+                }
+            };
+            const BUILDING_ORDER = ['blue', 'red', 'green', 'yellow'];
+
+            // =========================================================
+            // 4. CITY GRID PERSISTENCE (GOOGLE SITES SAFE STORAGE)
+            // =========================================================
+            const memoryFallbackStore = {};
+
+            function safeGetItem(key) {
+                try {
+                    const val = window.localStorage.getItem(key);
+                    if (val !== null) return val;
+                } catch (e) {}
+                try {
+                    if (window.name && window.name.startsWith('TB_STATE:')) {
+                        const bundle = JSON.parse(window.name.slice(9));
+                        if (bundle && key in bundle) return bundle[key];
+                    }
+                } catch (e) {}
+                return key in memoryFallbackStore ? memoryFallbackStore[key] : null;
+            }
+
+            function safeSetItem(key, val) {
+                memoryFallbackStore[key] = val;
+                try {
+                    window.localStorage.setItem(key, val);
+                } catch (e) {}
+                try {
+                    let bundle = {};
+                    if (window.name && window.name.startsWith('TB_STATE:')) {
+                        bundle = JSON.parse(window.name.slice(9)) || {};
+                    }
+                    bundle[key] = val;
+                    window.name = 'TB_STATE:' + JSON.stringify(bundle);
+                } catch (e) {}
+            }
+
+            function createInitialGrid() {
+                const g = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(null));
+                // Starter blue house on [2][2] so player immediately sees neighbor rules in action
+                g[2][2] = {
+                    type: 'blue',
+                    floors: 10,
+                    isGoldenRoof: false,
+                    baseResidents: 120,
+                    finalPop: 120,
+                    dropAnim: 0
+                };
+                return g;
+            }
+
+            function loadGrid() {
+                try {
+                    const raw = safeGetItem(STORAGE_KEY);
+                    if (raw) {
+                        const parsed = JSON.parse(raw);
+                        if (Array.isArray(parsed) && parsed.length === GRID_SIZE) {
+                            return parsed;
+                        }
+                    }
+                } catch (e) {}
+                return createInitialGrid();
+            }
+
+            function saveGrid() {
+                try {
+                    safeSetItem(STORAGE_KEY, JSON.stringify(state.cityGrid));
+                } catch (e) {}
+            }
+
+            // =========================================================
+            // 5. GLOBAL GAME STATE
+            // =========================================================
+            const state = {
+                mode: 'TITLE', // 'TITLE' | 'CITY' | 'BUILD'
+                citySubMode: 'VIEW', // 'VIEW' | 'SELECT_BUILDING' | 'PLACING' | 'DEMOLISH'
+                cityGrid: loadGrid(),
+                selectedLot: null,
+                pendingHouse: null, // { type, floors, baseResidents, isGoldenRoof }
+                demolishConfirmLot: null,
+                resetConfirm: false,
+                toastText: '',
+                toastTimer: 0,
+
+                // Interactive Canvas UI Hitboxes rebuilt each frame
+                hitboxes: [],
+
+                // Ambient City Traffic & Pedestrians
+                cars: [],
+                pedestrians: [],
+                clouds: [],
+                stars: [],
+                birds: [],
+
+                // Tower Construction State
+                build: {
+                    tier: BUILDING_TYPES.blue,
+                    isQuickPlay: false,
+                    residents: 0,
+                    score: 0,
+                    lives: 3,
+                    combo: 0,
+                    flawless: true,
+                    baseBlockW: 110,
+                    blocks: [],
+                    fallingBlocks: [],
+                    debrisChunks: [],
+                    parachutists: [],
+                    activeBlock: null,
+                    isGoldenRoof: false,
+                    roofPhase: false,
+                    failed: false,
+                    completeTimer: 0,
+                    crane: {
+                        angle: 0,
+                        time: 0,
+                        speed: 2.35,
+                        maxAngle: 0.62,
+                        ropeLen: 88
+                    },
+                    tower: {
+                        swayTime: 0,
+                        swayAmp: 0,
+                        imbalance: 0
+                    },
+                    cameraY: 0,
+                    targetCameraY: 0,
+                    shakeTime: 0,
+                    shakeMag: 0
+                },
+
+                particles: [],
+                popups: [],
+                lastTime: 0,
+                animClock: 0
+            };
+
+            function initScenery() {
+                state.clouds = [];
+                for (let i = 0; i < 14; i++) {
+                    state.clouds.push({
+                        x: Math.random() * 1.2 - 0.1,
+                        alt: 140 + i * 230 + Math.random() * 80,
+                        scale: 0.7 + Math.random() * 0.55,
+                        speed: (0.01 + Math.random() * 0.012) * (i % 2 === 0 ? 1 : -1)
+                    });
+                }
+
+                state.stars = [];
+                for (let i = 0; i < 70; i++) {
+                    state.stars.push({
+                        x: Math.random(),
+                        y: Math.random(),
+                        r: 1.2 + Math.random() * 1.6,
+                        phase: Math.random() * Math.PI * 2
+                    });
+                }
+
+                state.cars = [
+                    { axis: 'h', road: 1, t: 0.15, v: 0.15, color: '#E53935' },
+                    { axis: 'h', road: 3, t: 0.82, v: -0.13, color: '#FFB300' },
+                    { axis: 'h', road: 5, t: 0.45, v: 0.17, color: '#FFFFFF' },
+                    { axis: 'v', road: 1, t: 0.60, v: 0.14, color: '#2979FF' },
+                    { axis: 'v', road: 4, t: 0.25, v: -0.16, color: '#00A859' }
+                ];
+
+                state.pedestrians = [];
+                for (let i = 0; i < 8; i++) {
+                    state.pedestrians.push({
+                        axis: i % 2 === 0 ? 'h' : 'v',
+                        road: 1 + (i % 4),
+                        side: i % 2 === 0 ? -1 : 1,
+                        t: Math.random(),
+                        v: (0.04 + Math.random() * 0.03) * (i % 3 === 0 ? -1 : 1),
+                        shirt: ['#EF4444', '#3B82F6', '#FACC15', '#FFFFFF'][i % 4]
+                    });
+                }
+
+                state.birds = [];
+                for (let i = 0; i < 6; i++) {
+                    state.birds.push({
+                        x: Math.random(),
+                        alt: 220 + i * 260,
+                        speed: (0.045 + Math.random() * 0.025) * (i % 2 === 0 ? 1 : -1),
+                        flap: Math.random() * Math.PI * 2
+                    });
+                }
+            }
+            initScenery();
+
+            function showBanner(msg, dur = 2.0) {
+                state.toastText = msg;
+                state.toastTimer = dur;
+            }
+
+            // =========================================================
+            // 6. CITY ADJACENCY, GOLDEN ROOF BONUS & STATS
+            // =========================================================
+            function getNeighbors(r, c) {
+                const list = [];
+                const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+                for (const [dr, dc] of dirs) {
+                    const nr = r + dr;
+                    const nc = c + dc;
+                    if (nr >= 0 && nr < GRID_SIZE && nc >= 0 && nc < GRID_SIZE) {
+                        if (state.cityGrid[nr][nc]) list.push(state.cityGrid[nr][nc]);
+                    }
+                }
+                return list;
+            }
+
+            function evaluatePlacement(r, c, typeId, houseData = null) {
+                if (state.cityGrid[r][c] !== null) {
+                    return { valid: false, reason: 'УЧАСТОК ЗАНЯТ', pop: 0 };
+                }
+
+                const neighbors = getNeighbors(r, c);
+                const hasBlue = neighbors.some(n => n.type === 'blue');
+                const hasRed = neighbors.some(n => n.type === 'red');
+                const hasGreen = neighbors.some(n => n.type === 'green');
+
+                if (typeId === 'red' && !hasBlue) {
+                    return { valid: false, reason: 'НУЖЕН СИНИЙ ДОМ РЯДОМ', pop: 0 };
+                }
+                if (typeId === 'green' && (!hasBlue || !hasRed)) {
+                    return { valid: false, reason: 'НУЖНЫ СИНИЙ И КРАСНЫЙ', pop: 0 };
+                }
+                if (typeId === 'yellow' && (!hasBlue || !hasRed || !hasGreen)) {
+                    return { valid: false, reason: 'НУЖНЫ СИНИЙ, КРАСНЫЙ, ЗЕЛЁНЫЙ', pop: 0 };
+                }
+
+                const tier = BUILDING_TYPES[typeId];
+                const baseRes = houseData ? houseData.baseResidents : tier.floors * 12;
+                const isGolden = houseData ? houseData.isGoldenRoof : false;
+
+                // Golden Roof doubles base residents (x2)!
+                const roofMult = isGolden ? 2.0 : 1.0;
+
+                // Neighbor prestige bonus (+20 per neighbor, +40 if neighbor has Golden Roof)
+                let neighborBonus = 0;
+                for (const n of neighbors) {
+                    neighborBonus += n.isGoldenRoof ? 40 : 20;
+                }
+
+                const pop = Math.round((baseRes * roofMult + neighborBonus) * tier.multiplier);
+                return { valid: true, reason: 'OK', pop };
+            }
+
+            function getCityStats() {
+                let totalPop = 0;
+                let goldenCount = 0;
+                let buildingCount = 0;
+                for (let r = 0; r < GRID_SIZE; r++) {
+                    for (let c = 0; c < GRID_SIZE; c++) {
+                        const cell = state.cityGrid[r][c];
+                        if (cell) {
+                            totalPop += cell.finalPop;
+                            buildingCount++;
+                            if (cell.isGoldenRoof) goldenCount++;
+                        }
+                    }
+                }
+                return { totalPop, goldenCount, buildingCount };
+            }
+
+            function getNextTargetPop(pop) {
+                const targets = [800, 2500, 5000, 10000, 18000, 30000, 50000];
+                for (const t of targets) {
+                    if (pop < t) return t;
+                }
+                return Math.ceil((pop + 10000) / 10000) * 10000;
+            }
+
+            function hasAnyValidTileForType(typeId) {
+                for (let r = 0; r < GRID_SIZE; r++) {
+                    for (let c = 0; c < GRID_SIZE; c++) {
+                        if (evaluatePlacement(r, c, typeId).valid) return true;
+                    }
+                }
+                return false;
+            }
+
+            // =========================================================
+            // 7. TOWER BUILD INITIALIZATION & MECHANICS
+            // =========================================================
+            function getBlockMetrics() {
+                const bw = Math.max(88, Math.min(132, W * 0.29));
+                const bh = Math.max(44, Math.min(58, H * 0.068));
+                return { bw, bh };
+            }
+
+            function startBuild(typeId, isQuickPlay = false) {
+                const tier = BUILDING_TYPES[typeId] || BUILDING_TYPES.blue;
+                const { bw, bh } = getBlockMetrics();
+                const groundY = H - 84;
+
+                state.mode = 'BUILD';
+                const b = state.build;
+                b.tier = tier;
+                b.isQuickPlay = isQuickPlay;
+                b.residents = 10;
+                b.score = 100;
+                b.lives = 3;
+                b.combo = 0;
+                b.flawless = true;
+                b.baseBlockW = bw;
+                b.blocks = [];
+                b.fallingBlocks = [];
+                b.debrisChunks = [];
+                b.parachutists = [];
+                b.isGoldenRoof = false;
+                b.roofPhase = false;
+                b.failed = false;
+                b.completeTimer = 0;
+                b.cameraY = 0;
+                b.targetCameraY = 0;
+                b.shakeTime = 0;
+                b.tower = { swayTime: 0, swayAmp: 0, imbalance: 0 };
+                b.crane = {
+                    angle: 0,
+                    time: 0,
+                    speed: 2.35,
+                    maxAngle: 0.62,
+                    ropeLen: Math.max(70, H * 0.125)
+                };
+
+                // Floor 1: Ground Lobby
+                b.blocks.push({
+                    x: W / 2,
+                    y: groundY - (bh * 1.12) / 2,
+                    w: bw * 1.08,
+                    h: bh * 1.12,
+                    offsetX: 0,
+                    tier,
+                    isBase: true,
+                    isRoof: false,
+                    isGolden: false,
+                    squash: 0,
+                    glow: 0,
+                    litWindows: [true, true, true, true]
+                });
+
+                spawnNextBlock();
+            }
+
+            function spawnNextBlock() {
+                const b = state.build;
+                const { bw, bh } = getBlockMetrics();
+                const builtFloors = b.blocks.length; // Lobby = floor 1
+                const top = b.blocks[b.blocks.length - 1];
+
+                // Inherit the current top floor width (if previous floors were sliced!)
+                const currentTopW = top.isBase ? bw : top.w;
+
+                // In City Mode, once required floors (10, 15, 20, or 25) are stacked, drop the ROOF!
+                const isRoof = !b.isQuickPlay && builtFloors >= b.tier.floors;
+                b.roofPhase = isRoof;
+
+                const speedTier = Math.floor(builtFloors / 5);
+                b.crane.speed = Math.min(3.55, 2.35 + speedTier * 0.24);
+                b.crane.maxAngle = Math.min(0.68, 0.60 + speedTier * 0.015);
+
+                b.activeBlock = {
+                    state: 'SWINGING',
+                    x: W / 2,
+                    y: 115,
+                    vy: 0,
+                    w: isRoof ? currentTopW * 1.05 : currentTopW,
+                    h: isRoof ? bh * 0.96 : bh,
+                    tier: b.tier,
+                    isRoof,
+                    isGolden: isRoof && b.flawless,
+                    angle: 0,
+                    litWindows: [false, false, false, false, false, false]
+                };
+            }
+
+            function dropBlock() {
+                if (state.mode !== 'BUILD') return;
+                const b = state.build;
+                if (b.failed || b.completeTimer > 0) return;
+                const ab = b.activeBlock;
+                if (!ab || ab.state !== 'SWINGING') return;
+
+                sfx.drop();
+                ab.state = 'DROPPING';
+                ab.vy = Math.max(400, H * 0.58);
+                ab.angle = 0;
+            }
+
+            function spawnParachutes(targetX, targetY, count, blockRef) {
+                const canopies = ['#FFFFFF', '#FFF176', '#81D4FA', '#FFCCBC'];
+                const shirts = ['#E53935', '#2979FF', '#00A859', '#FFB300'];
+                for (let i = 0; i < count; i++) {
+                    const spread = (i - (count - 1) / 2) * 24 + (Math.random() - 0.5) * 10;
+                    state.build.parachutists.push({
+                        x: targetX + spread,
+                        y: targetY - 125 - i * 26,
+                        targetY,
+                        vx: (Math.random() - 0.5) * 14,
+                        vy: 60 + Math.random() * 16,
+                        phase: Math.random() * Math.PI * 2,
+                        canopy: canopies[i % canopies.length],
+                        shirt: shirts[i % shirts.length],
+                        blockRef
+                    });
+                }
+            }
+
+            function addParticles(x, y, color, count = 14, speedScale = 1) {
+                for (let i = 0; i < count; i++) {
+                    const ang = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.4;
+                    const spd = (65 + Math.random() * 135) * speedScale;
+                    state.particles.push({
+                        x,
+                        y,
+                        vx: Math.cos(ang) * spd,
+                        vy: Math.sin(ang) * spd - 40,
+                        size: 3.5 + Math.random() * 3.5,
+                        color,
+                        life: 0.5 + Math.random() * 0.3,
+                        maxLife: 0.8
+                    });
+                }
+            }
+
+            function addPopup(x, y, text, color = '#FFF176', scale = 1) {
+                state.popups.push({
+                    x,
+                    y,
+                    text,
+                    color,
+                    scale,
+                    vy: -58,
+                    life: 1.05
+                });
+            }
+
+            function spawnCrumbleDebris(sliceX, sliceY, sliceW, sliceH, dir, tier) {
+                const b = state.build;
+                // Break the sheared overhang into tumbling masonry chunks & bricks
+                const cols = Math.max(1, Math.min(4, Math.ceil(sliceW / 14)));
+                const rows = 3;
+                const cw = sliceW / cols;
+                const ch = sliceH / rows;
+
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        const cx = sliceX - sliceW / 2 + cw * (c + 0.5);
+                        const cy = sliceY - sliceH / 2 + ch * (r + 0.5);
+                        b.debrisChunks.push({
+                            x: cx,
+                            y: cy,
+                            w: Math.max(6, cw - 1),
+                            h: Math.max(6, ch - 1),
+                            vx: dir * (45 + c * 28 + Math.random() * 55),
+                            vy: -55 - r * 24 + (Math.random() - 0.5) * 35,
+                            angle: (Math.random() - 0.5) * 0.3,
+                            vAngle: dir * (3.5 + Math.random() * 5.0),
+                            color: (r + c) % 2 === 0 ? tier.wall : tier.wallDark,
+                            trimColor: r === 0 ? tier.trim : tier.windowOff,
+                            isGlass: r === 1 && cols > 1
+                        });
+                    }
+                }
+                // Dust puffs along the fracture seam
+                const seamX = sliceX - dir * (sliceW / 2);
+                addParticles(seamX, sliceY - sliceH * 0.25, '#E2E8F0', 10, 0.75);
+                addParticles(seamX, sliceY + sliceH * 0.25, '#94A3B8', 10, 0.75);
+            }
+
+            function checkBlockLanding() {
+                const b = state.build;
+                const ab = b.activeBlock;
+                const top = b.blocks[b.blocks.length - 1];
+                const landY = top.y - top.h / 2 - ab.h / 2;
+
+                if (ab.y < landY) return;
+
+                ab.y = landY;
+
+                // Support surface bounds (Lobby top ledge slightly inset so regular floors align cleanly)
+                const supportW = top.isBase ? b.baseBlockW : top.w;
+                const topLeft = top.x - supportW / 2;
+                const topRight = top.x + supportW / 2;
+
+                const abLeft = ab.x - ab.w / 2;
+                const abRight = ab.x + ab.w / 2;
+
+                const overlapLeft = Math.max(topLeft, abLeft);
+                const overlapRight = Math.min(topRight, abRight);
+                const overlapW = overlapRight - overlapLeft;
+
+                const dx = ab.x - top.x;
+                const absDx = Math.abs(dx);
+                const centerZone = Math.max(9, Math.min(supportW, ab.w) * 0.11);
+                const minViableW = b.baseBlockW * 0.22;
+
+                // =======================================
+                // 1. ROOF LANDING LOGIC
+                // =======================================
+                if (ab.isRoof) {
+                    const maxRoofCatch = supportW * 0.58;
+                    if (absDx <= maxRoofCatch) {
+                        const isCenterHit = absDx <= centerZone;
+                        if (isCenterHit) {
+                            ab.x = top.x;
+                            b.combo += 1;
+                        } else {
+                            b.flawless = false;
+                        }
+                        const earnedGolden = b.flawless && isCenterHit;
+                        b.isGoldenRoof = earnedGolden;
+
+                        const baseBlk = b.blocks[0];
+                        const roofX = isCenterHit ? top.x : top.x + dx * 0.35;
+                        const roofBlock = {
+                            x: roofX,
+                            y: ab.y,
+                            w: supportW * 1.05,
+                            h: ab.h,
+                            offsetX: roofX - baseBlk.x,
+                            tier: ab.tier,
+                            isBase: false,
+                            isRoof: true,
+                            isGolden: earnedGolden,
+                            squash: 1,
+                            glow: earnedGolden ? 1 : 0,
+                            litWindows: []
+                        };
+                        b.blocks.push(roofBlock);
+                        b.activeBlock = null;
+                        b.completeTimer = 1.65;
+
+                        if (earnedGolden) {
+                            sfx.goldenRoof();
+                            b.residents += 50;
+                            b.score += 1000;
+                            b.shakeMag = 7;
+                            b.shakeTime = 0.28;
+                            addParticles(roofBlock.x, roofBlock.y, '#FFD700', 32, 1.45);
+                            addParticles(roofBlock.x, roofBlock.y - 12, '#FFFFFF', 18, 1.2);
+                            addPopup(roofBlock.x, roofBlock.y - 52, 'ЗОЛОТАЯ КРЫША!', '#FFD700', 1.25);
+                            addPopup(roofBlock.x, roofBlock.y - 22, 'БОНУС ЖИТЕЛЕЙ x2', '#FFFFFF', 1.0);
+                            spawnParachutes(roofBlock.x, roofBlock.y - ab.h / 2, 5, roofBlock);
+                        } else {
+                            sfx.standardRoof();
+                            b.residents += 20;
+                            b.score += 400;
+                            b.shakeMag = 4;
+                            b.shakeTime = 0.18;
+                            addParticles(roofBlock.x, roofBlock.y, '#FFFFFF', 18, 1.0);
+                            addPopup(roofBlock.x, roofBlock.y - 42, 'КРЫША ГОТОВА!', '#FFF176', 1.12);
+                            addPopup(roofBlock.x, roofBlock.y - 16, '+20 ЖИТЕЛЕЙ', '#FFFFFF', 0.95);
+                            spawnParachutes(roofBlock.x, roofBlock.y - ab.h / 2, 3, roofBlock);
+                        }
+                        return;
+                    }
+                    // Missed roof falls through to full miss handling below
+                }
+
+                // =======================================
+                // 2. FLOOR OVERLAP & SLICING MECHANIC
+                // =======================================
+                if (!ab.isRoof && overlapW >= minViableW) {
+                    const isCenterHit = absDx <= centerZone;
+                    const baseBlk = b.blocks[0];
+
+                    let keptX, keptW;
+                    if (isCenterHit) {
+                        // Exact center hit: snap cleanly to top block with zero loss of width!
+                        keptX = top.x;
+                        keptW = ab.w;
+                        b.combo += 1;
+                        b.tower.imbalance *= 0.85;
+                    } else {
+                        // Off-center hit: KEEP ONLY THE SUPPORTED OVERLAP, SHEAR OFF OVERHANG!
+                        keptW = overlapW;
+                        keptX = (overlapLeft + overlapRight) / 2;
+                        b.combo = 0;
+                        b.flawless = false;
+
+                        const overhangW = ab.w - overlapW;
+                        if (overhangW > 2) {
+                            const dir = ab.x > top.x ? 1 : -1;
+                            const sliceX = dir > 0
+                                ? overlapRight + overhangW / 2
+                                : overlapLeft - overhangW / 2;
+                            spawnCrumbleDebris(sliceX, ab.y, overhangW, ab.h, dir, ab.tier);
+                        }
+                        b.tower.imbalance += (keptX - baseBlk.x) * 0.18;
+                    }
+
+                    // Gentle elastic tower sway only when floors are uneven (lobby stays fixed)
+                    const unevenShift = Math.abs(b.tower.imbalance);
+                    b.tower.swayAmp = unevenShift < 1.5
+                        ? 0
+                        : Math.min(11, unevenShift * 0.22);
+
+                    const landed = {
+                        x: keptX,
+                        y: ab.y,
+                        w: keptW,
+                        h: ab.h,
+                        offsetX: keptX - baseBlk.x,
+                        tier: ab.tier,
+                        isBase: false,
+                        isRoof: false,
+                        isGolden: false,
+                        squash: 1,
+                        glow: isCenterHit ? 1 : 0,
+                        litWindows: isCenterHit
+                            ? [true, true, true, true, true, true]
+                            : [true, Math.random() > 0.45, true, false, Math.random() > 0.35, false]
+                    };
+                    b.blocks.push(landed);
+
+                    const widthRatio = keptW / b.baseBlockW;
+                    const resGain = isCenterHit
+                        ? (16 + Math.min(b.combo, 6) * 4)
+                        : Math.max(4, Math.round(10 * widthRatio));
+                    const scoreGain = isCenterHit
+                        ? (100 + b.combo * 50)
+                        : Math.max(25, Math.round(60 * widthRatio));
+
+                    b.residents += resGain;
+                    b.score += scoreGain;
+
+                    if (isCenterHit) {
+                        sfx.perfect(b.combo);
+                        b.shakeMag = 4;
+                        b.shakeTime = 0.15;
+                        addParticles(keptX, ab.y + ab.h / 2, '#FFD700', 20, 1.15);
+                        const msg = b.combo > 1 ? `СУПЕР x${b.combo}!` : 'ТОЧНО В ЦЕНТР!';
+                        addPopup(keptX, ab.y - ab.h * 0.65, msg, '#FFD700', 1.12);
+                        addPopup(keptX, ab.y - ab.h * 0.2, `+${resGain} ЖИТ.`, '#FFFFFF', 0.9);
+                        spawnParachutes(keptX, ab.y - ab.h / 2, 3, landed);
+                    } else {
+                        sfx.crumble();
+                        b.shakeMag = 4.5;
+                        b.shakeTime = 0.16;
+                        const pctKept = Math.round((keptW / ab.w) * 100);
+                        addPopup(keptX, ab.y - ab.h * 0.55, `ОСПАЛОСЬ! (${pctKept}%)`, '#FFAB40', 0.96);
+                        addPopup(keptX, ab.y - ab.h * 0.18, `+${resGain} ЖИТ.`, '#B3E5FC', 0.88);
+                        spawnParachutes(keptX, ab.y - ab.h / 2, keptW > b.baseBlockW * 0.5 ? 2 : 1, landed);
+                    }
+
+                    const idealTop = H * 0.62;
+                    b.targetCameraY = Math.max(0, idealTop - ab.y);
+                    spawnNextBlock();
+                } else {
+                    // TOTAL MISS OR SUPPORT TOO NARROW (< 22% WIDTH)
+                    sfx.miss();
+                    b.shakeMag = 9;
+                    b.shakeTime = 0.28;
+                    b.combo = 0;
+                    b.flawless = false;
+                    b.lives -= 1;
+
+                    const dir = dx >= 0 ? 1 : -1;
+                    b.fallingBlocks.push({
+                        x: ab.x,
+                        y: ab.y,
+                        w: ab.w,
+                        h: ab.h,
+                        vx: dir * (135 + Math.random() * 45),
+                        vy: -65,
+                        angle: 0,
+                        vAngle: dir * 3.8,
+                        tier: ab.tier,
+                        isRoof: ab.isRoof,
+                        isGolden: false,
+                        litWindows: [false, false, false, false, false, false]
+                    });
+
+                    addParticles(ab.x, ab.y + ab.h / 2, '#FF5252', 16, 1.1);
+                    const missMsg = ab.isRoof
+                        ? 'КРЫША УПАЛА!'
+                        : overlapW > 0
+                        ? 'СЛИШКОМ УЗКО!'
+                        : 'МИМО!';
+                    addPopup(ab.x, ab.y - 18, missMsg, '#FF8A80', 1.08);
+
+                    if (b.lives <= 0) {
+                        b.activeBlock = null;
+                        b.failed = true;
+                    } else {
+                        spawnNextBlock();
+                    }
+                }
+            }
+
+            function finishTowerBuild() {
+                const b = state.build;
+                state.pendingHouse = {
+                    type: b.tier.id,
+                    floors: b.tier.floors,
+                    baseResidents: b.residents,
+                    isGoldenRoof: b.isGoldenRoof
+                };
+
+                state.mode = 'CITY';
+
+                // If player tapped a specific lot before constructing, place immediately if still valid
+                if (state.selectedLot) {
+                    const { r, c } = state.selectedLot;
+                    state.selectedLot = null;
+                    const check = evaluatePlacement(r, c, state.pendingHouse.type, state.pendingHouse);
+                    if (check.valid) {
+                        state.citySubMode = 'VIEW';
+                        placePendingHouse(r, c);
+                        return;
+                    }
+                }
+
+                state.citySubMode = 'PLACING';
+                showBanner(
+                    b.isGoldenRoof
+                        ? 'ЗОЛОТАЯ КРЫША! ВЫБЕРИ УЧАСТОК (x2)'
+                        : 'ВЫБЕРИ ЗЕЛЁНЫЙ УЧАСТОК НА КАРТЕ',
+                    3.0
+                );
+            }
+
+            function placePendingHouse(r, c) {
+                if (!state.pendingHouse) return;
+                const check = evaluatePlacement(r, c, state.pendingHouse.type, state.pendingHouse);
+                if (!check.valid) {
+                    sfx.miss();
+                    showBanner(check.reason, 2.0);
+                    return;
+                }
+
+                sfx.cityPlace(state.pendingHouse.isGoldenRoof);
+                state.cityGrid[r][c] = {
+                    type: state.pendingHouse.type,
+                    floors: state.pendingHouse.floors,
+                    isGoldenRoof: state.pendingHouse.isGoldenRoof,
+                    baseResidents: state.pendingHouse.baseResidents,
+                    finalPop: check.pop,
+                    dropAnim: 1.0
+                };
+
+                const wasGolden = state.pendingHouse.isGoldenRoof;
+                state.pendingHouse = null;
+                state.citySubMode = 'VIEW';
+                saveGrid();
+
+                const pt = getLotCenter(r, c);
+                addParticles(pt.x, pt.y, wasGolden ? '#FFD700' : '#FFFFFF', 26, 1.3);
+                addPopup(pt.x, pt.y - 26, `+${check.pop} ЖИТЕЛЕЙ!`, wasGolden ? '#FFD700' : '#FFF176', 1.18);
+            }
+
+            // =========================================================
+            // 8. CITY GRID GEOMETRY
+            // =========================================================
+            function getCityGeometry() {
+                const topBarH = 68;
+                const bottomBarH = 68;
+                const availW = W - 20;
+                const availH = H - topBarH - bottomBarH;
+                const boardSize = Math.max(250, Math.min(availW, availH, 460));
+                const roadW = Math.max(11, Math.round(boardSize * 0.038));
+                const lotSize = (boardSize - roadW * (GRID_SIZE + 1)) / GRID_SIZE;
+                const startX = Math.round((W - boardSize) / 2);
+                const startY = Math.round(topBarH + (availH - boardSize) / 2);
+                return { boardSize, roadW, lotSize, startX, startY };
+            }
+
+            function getLotRect(r, c) {
+                const { roadW, lotSize, startX, startY } = getCityGeometry();
+                return {
+                    x: startX + roadW + c * (lotSize + roadW),
+                    y: startY + roadW + r * (lotSize + roadW),
+                    w: lotSize,
+                    h: lotSize
+                };
+            }
+
+            function getLotCenter(r, c) {
+                const rect = getLotRect(r, c);
+                return { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
+            }
+
+            // =========================================================
+            // 9. CLASSIC 2005 J2ME CANVAS UI PRIMITIVES
+            // =========================================================
+            function registerHitbox(id, x, y, w, h, onClick) {
+                state.hitboxes.push({ id, x, y, w, h, onClick });
+            }
+
+            function drawArcadeBox(x, y, w, h, fillTop, fillBot, borderCol = '#111827', innerBorder = '#FFF59D') {
+                // Hard J2ME 4px drop shadow (no blur)
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+                ctx.fillRect(x + 4, y + 4, w, h);
+
+                const g = ctx.createLinearGradient(0, y, 0, y + h);
+                g.addColorStop(0, fillTop);
+                g.addColorStop(1, fillBot);
+                ctx.fillStyle = g;
+                ctx.fillRect(x, y, w, h);
+
+                // Outer thick black pixel-crisp border
+                ctx.strokeStyle = borderCol;
+                ctx.lineWidth = 3;
+                ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+
+                // Inner bevel highlight line
+                if (innerBorder) {
+                    ctx.strokeStyle = innerBorder;
+                    ctx.lineWidth = 1.5;
+                    ctx.strokeRect(x + 3.5, y + 3.5, w - 7, h - 7);
+                }
+            }
+
+            function drawArcadeButton(id, x, y, w, h, label, scheme = 'gold', onClick, fontSize = 16) {
+                const palettes = {
+                    gold: ['#FFE066', '#F59E0B', '#111827', '#FFFBEB'],
+                    blue: ['#38BDF8', '#0284C7', '#FFFFFF', '#BAE6FD'],
+                    red: ['#F87171', '#DC2626', '#FFFFFF', '#FECACA'],
+                    dark: ['#334155', '#0F172A', '#FACC15', '#64748B'],
+                    green: ['#4ADE80', '#16A34A', '#111827', '#DCFCE7']
+                };
+                const [c1, c2, txtCol, hiCol] = palettes[scheme] || palettes.gold;
+
+                drawArcadeBox(x, y, w, h, c1, c2, '#111827', hiCol);
+
+                ctx.font = `900 ${fontSize}px 'Arial Black', Impact, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                if (txtCol === '#FFFFFF') {
+                    ctx.fillStyle = '#111827';
+                    ctx.fillText(label, x + w / 2 + 1.5, y + h / 2 + 2);
+                }
+                ctx.fillStyle = txtCol;
+                ctx.fillText(label, x + w / 2, y + h / 2 + 0.5);
+
+                if (onClick) {
+                    registerHitbox(id, x, y, w, h, () => {
+                        sfx.click();
+                        onClick();
+                    });
+                }
+            }
+
+            function drawPixelPersonIcon(cx, cy, scale = 1) {
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.scale(scale, scale);
+                // Shoulders
+                ctx.fillStyle = '#2979FF';
+                ctx.strokeStyle = '#111827';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(0, 7, 7, Math.PI, 0);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                // Head
+                ctx.fillStyle = '#FFE0B2';
+                ctx.beginPath();
+                ctx.arc(0, -3, 4.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            function drawPixelHeartIcon(cx, cy, active = true, scale = 1) {
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.scale(scale, scale);
+                ctx.beginPath();
+                ctx.moveTo(0, 7);
+                ctx.bezierCurveTo(-11, -1, -11, -9, -4.5, -9);
+                ctx.bezierCurveTo(-1.5, -9, 0, -6.5, 0, -5);
+                ctx.bezierCurveTo(0, -6.5, 1.5, -9, 4.5, -9);
+                ctx.bezierCurveTo(11, -9, 11, -1, 0, 7);
+                ctx.closePath();
+
+                ctx.fillStyle = active ? '#EF4444' : '#334155';
+                ctx.fill();
+                ctx.strokeStyle = '#111827';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                if (active) {
+                    ctx.fillStyle = '#FECACA';
+                    ctx.fillRect(-5, -6, 2.5, 2.5);
+                }
+                ctx.restore();
+            }
+
+            function drawSoundIcon(cx, cy, muted) {
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.fillStyle = '#FACC15';
+                ctx.strokeStyle = '#111827';
+                ctx.lineWidth = 2;
+                // Speaker box + cone
+                ctx.beginPath();
+                ctx.moveTo(-8, -4);
+                ctx.lineTo(-3, -4);
+                ctx.lineTo(3, -9);
+                ctx.lineTo(3, 9);
+                ctx.lineTo(-3, 4);
+                ctx.lineTo(-8, 4);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                if (!muted) {
+                    ctx.strokeStyle = '#FACC15';
+                    ctx.lineWidth = 2.2;
+                    ctx.beginPath();
+                    ctx.arc(4, 0, 5, -0.7, 0.7);
+                    ctx.stroke();
+                } else {
+                    ctx.strokeStyle = '#EF4444';
+                    ctx.lineWidth = 2.6;
+                    ctx.beginPath();
+                    ctx.moveTo(5, -5);
+                    ctx.lineTo(11, 5);
+                    ctx.moveTo(11, -5);
+                    ctx.lineTo(5, 5);
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+
+            function drawMiniHouseIcon(cx, cy, tier, isGolden = false, scale = 1) {
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.scale(scale, scale);
+
+                // Body
+                ctx.fillStyle = tier.wall;
+                ctx.strokeStyle = '#111827';
+                ctx.lineWidth = 2;
+                ctx.fillRect(-13, -6, 26, 20);
+                ctx.strokeRect(-13, -6, 26, 20);
+
+                // Roof
+                ctx.fillStyle = isGolden ? '#FFD700' : tier.roof;
+                ctx.beginPath();
+                ctx.moveTo(-16, -6);
+                ctx.lineTo(0, -18);
+                ctx.lineTo(16, -6);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                // Windows
+                ctx.fillStyle = tier.windowLit;
+                ctx.fillRect(-8, -2, 5, 5);
+                ctx.fillRect(3, -2, 5, 5);
+                ctx.fillRect(-8, 6, 5, 5);
+                ctx.fillRect(3, 6, 5, 5);
+
+                ctx.restore();
+            }
+
+            function drawLockIcon(cx, cy) {
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.strokeStyle = '#111827';
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.arc(0, -4, 5, Math.PI, 0);
+                ctx.stroke();
+
+                ctx.fillStyle = '#94A3B8';
+                ctx.fillRect(-7, -3, 14, 11);
+                ctx.strokeRect(-7, -3, 14, 11);
+                ctx.restore();
+            }
+
+            // =========================================================
+            // 10. UPDATE SIMULATION
+            // =========================================================
+            function update(dt) {
+                state.animClock += dt;
+
+                if (state.toastTimer > 0) {
+                    state.toastTimer = Math.max(0, state.toastTimer - dt);
+                }
+
+                // Clouds
+                for (const c of state.clouds) {
+                    c.x += c.speed * dt;
+                    if (c.x > 1.25) c.x = -0.25;
+                    if (c.x < -0.25) c.x = 1.25;
+                }
+
+                // Ambient Retro Birds
+                for (const bird of state.birds) {
+                    bird.x += bird.speed * dt;
+                    bird.flap += dt * 9.5;
+                    if (bird.x > 1.12) bird.x = -0.12;
+                    if (bird.x < -0.12) bird.x = 1.12;
+                }
+
+                // City Cars & Pedestrians
+                for (const car of state.cars) {
+                    car.t += car.v * dt;
+                    if (car.t > 1.06) car.t = -0.06;
+                    if (car.t < -0.06) car.t = 1.06;
+                }
+                for (const ped of state.pedestrians) {
+                    ped.t += ped.v * dt;
+                    if (ped.t > 1.04) ped.t = -0.04;
+                    if (ped.t < -0.04) ped.t = 1.04;
+                }
+
+                // City building drop bounce
+                for (let r = 0; r < GRID_SIZE; r++) {
+                    for (let c = 0; c < GRID_SIZE; c++) {
+                        const cell = state.cityGrid[r][c];
+                        if (cell && cell.dropAnim > 0) {
+                            cell.dropAnim = Math.max(0, cell.dropAnim - dt * 3.4);
+                        }
+                    }
+                }
+
+                // Particles
+                for (let i = state.particles.length - 1; i >= 0; i--) {
+                    const p = state.particles[i];
+                    p.vy += 440 * dt;
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.life -= dt;
+                    if (p.life <= 0) state.particles.splice(i, 1);
+                }
+
+                // Floating arcade popups
+                for (let i = state.popups.length - 1; i >= 0; i--) {
+                    const f = state.popups[i];
+                    f.y += f.vy * dt;
+                    f.vy *= 0.94;
+                    f.life -= dt;
+                    if (f.life <= 0) state.popups.splice(i, 1);
+                }
+
+                // Build Mode Physics
+                if (state.mode === 'BUILD') {
+                    const b = state.build;
+                    b.cameraY += (b.targetCameraY - b.cameraY) * Math.min(1, dt * 6.5);
+                    if (b.shakeTime > 0) b.shakeTime = Math.max(0, b.shakeTime - dt);
+
+                    if (b.completeTimer > 0) {
+                        b.completeTimer -= dt;
+                        if (b.completeTimer <= 0) {
+                            finishTowerBuild();
+                            return;
+                        }
+                    }
+
+                    // Elastic Tower Sway (Lobby at index 0 stays firmly anchored to the ground)
+                    const fl = b.blocks.length - 1;
+                    const baseX = W / 2;
+                    b.blocks[0].x = baseX;
+                    if (fl > 0 && b.tower.swayAmp > 0.1) {
+                        b.tower.swayTime += dt * (1.45 + Math.min(0.65, fl * 0.015));
+                        const sway = Math.sin(b.tower.swayTime) * b.tower.swayAmp;
+                        for (let i = 1; i < b.blocks.length; i++) {
+                            const blk = b.blocks[i];
+                            const ratio = i / Math.max(1, fl);
+                            blk.x = baseX + blk.offsetX + sway * Math.pow(ratio, 1.25);
+                        }
+                    } else {
+                        for (let i = 1; i < b.blocks.length; i++) {
+                            const blk = b.blocks[i];
+                            blk.x = baseX + blk.offsetX;
+                        }
+                    }
+
+                    for (const blk of b.blocks) {
+                        if (blk.squash > 0) blk.squash = Math.max(0, blk.squash - dt * 5.5);
+                        if (blk.glow > 0) blk.glow = Math.max(0, blk.glow - dt * 1.6);
+                    }
+
+                    // Crane Trolley Sliding Horizontally Along the Boom
+                    const px = W / 2;
+                    const py = -b.cameraY + 66;
+                    const travelSpan = Math.min(W * 0.34, 155);
+                    b.crane.time += dt * b.crane.speed;
+                    b.crane.angle = Math.sin(b.crane.time);
+
+                    if (b.activeBlock) {
+                        const ab = b.activeBlock;
+                        if (ab.state === 'SWINGING') {
+                            const hx = px + b.crane.angle * travelSpan;
+                            const hy = py + b.crane.ropeLen * 0.65;
+                            ab.x = hx;
+                            ab.y = hy + ab.h / 2;
+                            ab.angle = 0;
+                            // Preview Golden Roof ONLY if entire house had zero mistakes AND roof is aligned on center!
+                            if (ab.isRoof) {
+                                const top = b.blocks[b.blocks.length - 1];
+                                const centerTol = Math.max(9, Math.min(top.w, ab.w) * 0.11);
+                                ab.isGolden = b.flawless && Math.abs(ab.x - top.x) <= centerTol;
+                            }
+                        } else if (ab.state === 'DROPPING') {
+                            ab.vy += 1720 * dt;
+                            ab.y += ab.vy * dt;
+                            if (ab.isRoof) {
+                                const top = b.blocks[b.blocks.length - 1];
+                                const centerTol = Math.max(9, Math.min(top.w, ab.w) * 0.11);
+                                ab.isGolden = b.flawless && Math.abs(ab.x - top.x) <= centerTol;
+                            }
+                            checkBlockLanding();
+                        }
+                    }
+
+                    // Falling Blocks
+                    for (let i = b.fallingBlocks.length - 1; i >= 0; i--) {
+                        const fb = b.fallingBlocks[i];
+                        fb.vy += 1550 * dt;
+                        fb.x += fb.vx * dt;
+                        fb.y += fb.vy * dt;
+                        fb.angle += fb.vAngle * dt;
+                        if (fb.y + b.cameraY > H + 200) b.fallingBlocks.splice(i, 1);
+                    }
+
+                    // Sheared Masonry Debris Chunks
+                    for (let i = b.debrisChunks.length - 1; i >= 0; i--) {
+                        const dc = b.debrisChunks[i];
+                        dc.vy += 1620 * dt;
+                        dc.x += dc.vx * dt;
+                        dc.y += dc.vy * dt;
+                        dc.angle += dc.vAngle * dt;
+                        if (dc.y + b.cameraY > H + 180) b.debrisChunks.splice(i, 1);
+                    }
+
+                    // Parachuting Citizens
+                    for (let i = b.parachutists.length - 1; i >= 0; i--) {
+                        const p = b.parachutists[i];
+                        p.phase += dt * 4.5;
+                        p.y += p.vy * dt;
+                        p.x += (p.vx + Math.sin(p.phase) * 26) * dt;
+                        const destY = p.blockRef ? p.blockRef.y : p.targetY;
+                        if (p.y >= destY) {
+                            sfx.chuteLand();
+                            addParticles(p.x, destY, '#FFF176', 5, 0.45);
+                            b.parachutists.splice(i, 1);
+                        }
+                    }
+                }
+            }
+
+            // =========================================================
+            // 11. RENDERING: CLASSIC 2005 DIGITAL CHOCOLATE GRAPHICS
+            // =========================================================
+            function drawCloud2005(cx, cy, s) {
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.scale(s, s);
+
+                // Dark outline silhouette
+                ctx.fillStyle = '#1E3A8A';
+                ctx.beginPath();
+                ctx.arc(0, 2, 24, 0, Math.PI * 2);
+                ctx.arc(22, 0, 28, 0, Math.PI * 2);
+                ctx.arc(46, 3, 20, 0, Math.PI * 2);
+                ctx.arc(-20, 5, 18, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Blue shadow puff
+                ctx.fillStyle = '#93C5FD';
+                ctx.beginPath();
+                ctx.arc(0, 3, 21, 0, Math.PI * 2);
+                ctx.arc(22, 1, 25, 0, Math.PI * 2);
+                ctx.arc(46, 4, 17, 0, Math.PI * 2);
+                ctx.arc(-20, 6, 15, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Crisp white top puff
+                ctx.fillStyle = '#FFFFFF';
+                ctx.beginPath();
+                ctx.arc(0, -1, 20, 0, Math.PI * 2);
+                ctx.arc(22, -3, 24, 0, Math.PI * 2);
+                ctx.arc(46, 0, 16, 0, Math.PI * 2);
+                ctx.arc(-20, 2, 14, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            function drawTowerBlock2005(blk, angle = 0) {
+                ctx.save();
+                ctx.translate(blk.x, blk.y);
+                if (angle !== 0) ctx.rotate(angle);
+
+                const sq = blk.squash || 0;
+                ctx.scale(1 + sq * 0.08, 1 - sq * 0.10);
+
+                const w = blk.w;
+                const h = blk.h;
+                const hw = w / 2;
+                const hh = h / 2;
+                const t = blk.tier;
+
+                // Center Hit / Golden Glow Aura
+                if (blk.glow > 0) {
+                    ctx.fillStyle = `rgba(255, 215, 0, ${blk.glow * 0.45})`;
+                    ctx.fillRect(-hw - 6, -hh - 6, w + 12, h + 12);
+                }
+
+                // =======================================
+                // ROOF PIECE (STANDARD vs GOLDEN ROOF x2)
+                // =======================================
+                if (blk.isRoof) {
+                    const baseFill = blk.isGolden ? '#FFB300' : t.roof;
+                    const slopeLight = blk.isGolden ? '#FFE066' : t.roofLight;
+                    const slopeDark = blk.isGolden ? '#B45309' : '#0F172A';
+
+                    // Trapezoid Mansard Roof
+                    ctx.beginPath();
+                    ctx.moveTo(-hw - 4, hh);
+                    ctx.lineTo(-hw * 0.65, -hh + 8);
+                    ctx.lineTo(hw * 0.65, -hh + 8);
+                    ctx.lineTo(hw + 4, hh);
+                    ctx.closePath();
+                    ctx.fillStyle = baseFill;
+                    ctx.fill();
+
+                    // Left sunlit facet & right shaded facet
+                    ctx.beginPath();
+                    ctx.moveTo(-hw - 4, hh);
+                    ctx.lineTo(-hw * 0.65, -hh + 8);
+                    ctx.lineTo(0, -hh + 8);
+                    ctx.lineTo(0, hh);
+                    ctx.closePath();
+                    ctx.fillStyle = slopeLight;
+                    ctx.fill();
+
+                    ctx.beginPath();
+                    ctx.moveTo(hw * 0.35, -hh + 8);
+                    ctx.lineTo(hw * 0.65, -hh + 8);
+                    ctx.lineTo(hw + 4, hh);
+                    ctx.lineTo(hw * 0.55, hh);
+                    ctx.closePath();
+                    ctx.fillStyle = slopeDark;
+                    ctx.fill();
+
+                    ctx.strokeStyle = '#111827';
+                    ctx.lineWidth = 2.5;
+                    ctx.beginPath();
+                    ctx.moveTo(-hw - 4, hh);
+                    ctx.lineTo(-hw * 0.65, -hh + 8);
+                    ctx.lineTo(hw * 0.65, -hh + 8);
+                    ctx.lineTo(hw + 4, hh);
+                    ctx.closePath();
+                    ctx.stroke();
+
+                    // Roof Shingle / Tile Ridges
+                    ctx.strokeStyle = blk.isGolden ? '#B45309' : 'rgba(0,0,0,0.35)';
+                    ctx.lineWidth = 1.5;
+                    for (let i = -2; i <= 2; i++) {
+                        ctx.beginPath();
+                        ctx.moveTo(i * (hw * 0.25), -hh + 8);
+                        ctx.lineTo(i * (hw * 0.36), hh);
+                        ctx.stroke();
+                    }
+
+                    // Bottom Trim Band
+                    ctx.fillStyle = blk.isGolden ? '#FFFBEB' : t.trim;
+                    ctx.fillRect(-hw - 5, hh - 7, w + 10, 7);
+                    ctx.strokeStyle = '#111827';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(-hw - 5, hh - 7, w + 10, 7);
+
+                    // Top Spire / Radio Antenna
+                    ctx.fillStyle = blk.isGolden ? '#FFD700' : '#CBD5E1';
+                    ctx.fillRect(-2.5, -hh - 14, 5, 22);
+                    ctx.strokeRect(-2.5, -hh - 14, 5, 22);
+
+                    // Beacon Ball at tip
+                    ctx.beginPath();
+                    ctx.arc(0, -hh - 16, 4.5, 0, Math.PI * 2);
+                    ctx.fillStyle = blk.isGolden ? '#FFFFFF' : '#EF4444';
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Golden Sparkle Glint
+                    if (blk.isGolden) {
+                        const pulse = 0.5 + 0.5 * Math.sin(state.animClock * 9);
+                        ctx.fillStyle = `rgba(255, 255, 255, ${0.4 + pulse * 0.6})`;
+                        ctx.fillRect(-hw * 0.35 - 3, -2, 6, 6);
+                    }
+
+                    ctx.restore();
+                    return;
+                }
+
+                // =======================================
+                // REGULAR FLOOR BLOCK (ENHANCED 2005 J2ME DETAIL)
+                // =======================================
+                ctx.fillStyle = t.wall;
+                ctx.fillRect(-hw, -hh, w, h);
+
+                // Subtle horizontal brick/panel courses
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.10)';
+                for (let py = -hh + 14; py < hh - 6; py += 11) {
+                    ctx.fillRect(-hw + 3, py, w - 6, 1.5);
+                }
+
+                // Left bright edge highlight & right dark 3D bevel
+                ctx.fillStyle = t.wallLight;
+                ctx.fillRect(-hw + 2, -hh + 2, Math.min(5, w * 0.08), h - 4);
+                ctx.fillStyle = t.wallDark;
+                ctx.fillRect(hw - w * 0.15, -hh + 2, w * 0.15 - 2, h - 4);
+
+                // Architectural Corner Stone Quoins (if block isn't tiny)
+                if (w >= 46) {
+                    ctx.fillStyle = t.trim;
+                    for (let qy = -hh + 9; qy < hh - 9; qy += 12) {
+                        ctx.fillRect(-hw + 1, qy, 4, 6);
+                        ctx.fillRect(hw - 5, qy, 4, 6);
+                    }
+                }
+
+                // Top Cornice Molding with dentil blocks
+                ctx.fillStyle = t.trim;
+                ctx.fillRect(-hw - 2, -hh, w + 4, 7);
+                ctx.strokeStyle = '#111827';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(-hw - 2, -hh, w + 4, 7);
+
+                ctx.fillStyle = t.wallDark;
+                for (let dx = -hw + 4; dx < hw - 6; dx += 10) {
+                    ctx.fillRect(dx, -hh + 4, 4, 2.5);
+                }
+
+                // Bottom Sill
+                ctx.fillStyle = '#111827';
+                ctx.fillRect(-hw, hh - 4, w, 4);
+
+                // Outer Crisp Block Frame
+                ctx.strokeStyle = '#111827';
+                ctx.lineWidth = 2.5;
+                ctx.strokeRect(-hw, -hh, w, h);
+
+                if (blk.isBase) {
+                    // Ground Floor Lobby Doors + Striped Awning
+                    const dw = w * 0.28;
+                    const dh = h * 0.56;
+                    ctx.fillStyle = '#0F172A';
+                    ctx.fillRect(-dw / 2, hh - dh - 3, dw, dh);
+                    ctx.strokeStyle = '#FFFFFF';
+                    ctx.lineWidth = 1.5;
+                    ctx.strokeRect(-dw / 2, hh - dh - 3, dw, dh);
+
+                    // Center door mullion & brass handles
+                    ctx.beginPath();
+                    ctx.moveTo(0, hh - dh - 3);
+                    ctx.lineTo(0, hh - 3);
+                    ctx.stroke();
+
+                    ctx.fillStyle = '#FACC15';
+                    ctx.fillRect(-3.5, hh - dh * 0.52, 2, 4);
+                    ctx.fillRect(1.5, hh - dh * 0.52, 2, 4);
+
+                    // Red/White Striped Awning
+                    const aw = dw * 1.45;
+                    ctx.fillStyle = '#E53935';
+                    ctx.fillRect(-aw / 2, hh - dh - 10, aw, 7);
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.fillRect(-aw / 4, hh - dh - 10, aw / 6, 7);
+                    ctx.fillRect(aw / 12, hh - dh - 10, aw / 6, 7);
+                    ctx.strokeStyle = '#111827';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(-aw / 2, hh - dh - 10, aw, 7);
+
+                    // Lobby side windows
+                    const ww = w * 0.15;
+                    const wh = h * 0.34;
+                    [-hw + w * 0.11, hw - w * 0.11 - ww].forEach(wx => {
+                        ctx.fillStyle = t.windowLit;
+                        ctx.fillRect(wx, -hh + 13, ww, wh);
+                        ctx.strokeStyle = '#111827';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(wx, -hh + 13, ww, wh);
+                    });
+                } else {
+                    // Dynamically compute window columns based on sliced block width!
+                    const padX = Math.max(7, w * 0.11);
+                    const padY = 11;
+                    const gapX = 5;
+                    const gapY = 5;
+                    const availW = w - padX * 2;
+                    const cols = Math.max(1, Math.min(3, Math.floor((availW + gapX) / 22)));
+                    const rows = 2;
+                    const ww = Math.max(8, (availW - gapX * (cols - 1)) / cols);
+                    const wh = (h - padY - 7 - gapY * (rows - 1)) / rows;
+
+                    let idx = 0;
+                    for (let r = 0; r < rows; r++) {
+                        for (let c = 0; c < cols; c++) {
+                            const wx = -hw + padX + c * (ww + gapX);
+                            const wy = -hh + padY + r * (wh + gapY);
+                            const lit = blk.litWindows && blk.litWindows[idx++ % blk.litWindows.length];
+
+                            ctx.fillStyle = lit ? t.windowLit : t.windowOff;
+                            ctx.fillRect(wx, wy, ww, wh);
+
+                            if (lit) {
+                                // Subtle warm curtain / interior shade on top edge
+                                ctx.fillStyle = 'rgba(234, 88, 12, 0.35)';
+                                ctx.fillRect(wx, wy, ww, 3);
+                            } else {
+                                // Diagonal glass reflection shine
+                                ctx.fillStyle = 'rgba(255,255,255,0.24)';
+                                ctx.beginPath();
+                                ctx.moveTo(wx + 2, wy + wh - 2);
+                                ctx.lineTo(wx + ww * 0.55, wy + 2);
+                                ctx.lineTo(wx + ww * 0.85, wy + 2);
+                                ctx.lineTo(wx + ww * 0.3, wy + wh - 2);
+                                ctx.closePath();
+                                ctx.fill();
+                            }
+
+                            // Crisp white window frame + center sash bar
+                            ctx.strokeStyle = '#FFFFFF';
+                            ctx.lineWidth = 1.4;
+                            ctx.strokeRect(wx, wy, ww, wh);
+
+                            if (ww >= 14) {
+                                ctx.beginPath();
+                                ctx.moveTo(wx + ww / 2, wy);
+                                ctx.lineTo(wx + ww / 2, wy + wh);
+                                ctx.stroke();
+                            }
+
+                            // Red building mini balcony rail on bottom row
+                            if (t.id === 'red' && r === 1) {
+                                ctx.fillStyle = '#111827';
+                                ctx.fillRect(wx - 1, wy + wh - 3, ww + 2, 3);
+                            }
+                        }
+                    }
+                }
+
+                ctx.restore();
+            }
+
+            // =========================================================
+            // 12. RENDER: TITLE SCREEN (2005 DIGITAL CHOCOLATE STYLE)
+            // =========================================================
+            function renderTitleScreen() {
+                // Classic bright sky gradient
+                const sky = ctx.createLinearGradient(0, 0, 0, H);
+                sky.addColorStop(0, '#0284C7');
+                sky.addColorStop(0.65, '#38BDF8');
+                sky.addColorStop(1, '#BAE6FD');
+                ctx.fillStyle = sky;
+                ctx.fillRect(0, 0, W, H);
+
+                // Sun
+                ctx.fillStyle = '#FACC15';
+                ctx.strokeStyle = '#111827';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(W * 0.82, H * 0.16, 32, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                // Clouds
+                state.clouds.slice(0, 6).forEach((c, idx) => {
+                    drawCloud2005(c.x * W, 70 + idx * 55, c.scale * 0.85);
+                });
+
+                // City Skyline Silhouette + Grass & Road at Bottom
+                const gY = H - 78;
+                const skyline = [
+                    { x: 0.02, w: 0.14, h: 120, c: '#1D4ED8' },
+                    { x: 0.14, w: 0.12, h: 165, c: '#2563EB' },
+                    { x: 0.72, w: 0.13, h: 155, c: '#2563EB' },
+                    { x: 0.83, w: 0.15, h: 110, c: '#1D4ED8' }
+                ];
+                skyline.forEach(s => {
+                    ctx.fillStyle = s.c;
+                    ctx.strokeStyle = '#111827';
+                    ctx.lineWidth = 2.5;
+                    ctx.fillRect(s.x * W, gY - s.h, s.w * W, s.h);
+                    ctx.strokeRect(s.x * W, gY - s.h, s.w * W, s.h);
+                });
+
+                // Demo 4-floor colorful tower in center background with Golden Roof!
+                const demoW = Math.min(110, W * 0.27);
+                const demoH = 44;
+                const demoTiers = [BUILDING_TYPES.blue, BUILDING_TYPES.red, BUILDING_TYPES.green, BUILDING_TYPES.yellow];
+                for (let i = 0; i < 4; i++) {
+                    drawTowerBlock2005({
+                        x: W / 2,
+                        y: gY - demoH / 2 - i * demoH,
+                        w: demoW,
+                        h: demoH,
+                        tier: demoTiers[i],
+                        isBase: i === 0,
+                        isRoof: false,
+                        litWindows: [true, true, false, true, true, false]
+                    });
+                }
+                // Golden Roof on demo tower
+                drawTowerBlock2005({
+                    x: W / 2,
+                    y: gY - demoH / 2 - 4 * demoH,
+                    w: demoW * 1.05,
+                    h: demoH * 0.9,
+                    tier: BUILDING_TYPES.yellow,
+                    isRoof: true,
+                    isGolden: true
+                });
+
+                // Grass & Asphalt Strip
+                ctx.fillStyle = '#16A34A';
+                ctx.fillRect(0, gY, W, 18);
+                ctx.strokeStyle = '#111827';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(0, gY);
+                ctx.lineTo(W, gY);
+                ctx.stroke();
+
+                ctx.fillStyle = '#334155';
+                ctx.fillRect(0, gY + 18, W, 60);
+                ctx.fillStyle = '#FACC15';
+                for (let x = 14; x < W; x += 50) {
+                    ctx.fillRect(x, gY + 44, 24, 5);
+                }
+
+                // Classic 2005 Title Banner Plaque
+                const panelW = Math.min(340, W - 28);
+                const panelX = (W - panelW) / 2;
+                const panelY = Math.max(24, H * 0.06);
+
+                drawArcadeBox(panelX, panelY, panelW, 114, '#1E3A8A', '#0F172A', '#111827', '#FACC15');
+
+                // Subtitle tag
+                ctx.fillStyle = '#FACC15';
+                ctx.font = `900 11px 'Arial Black', sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('CITY BLOXX ARCADE EDITION', W / 2, panelY + 22);
+
+                // TOWER text (Yellow with hard black shadow)
+                ctx.font = `900 ${Math.min(40, Math.round(panelW * 0.125))}px 'Arial Black', Impact, sans-serif`;
+                ctx.fillStyle = '#111827';
+                ctx.fillText('TOWER', W / 2 + 3, panelY + 58);
+                ctx.fillStyle = '#FFE066';
+                ctx.fillText('TOWER', W / 2, panelY + 55);
+
+                // BLOXX text (Red-Orange with hard black shadow)
+                ctx.fillStyle = '#111827';
+                ctx.fillText('BLOXX', W / 2 + 3, panelY + 95);
+                ctx.fillStyle = '#FF5252';
+                ctx.fillText('BLOXX', W / 2, panelY + 92);
+
+                // Main Menu Action Buttons
+                const btnW = Math.min(270, W - 48);
+                const btnX = (W - btnW) / 2;
+                const btnStartY = panelY + 132;
+
+                drawArcadeButton('btn_city', btnX, btnStartY, btnW, 50, 'ИГРАТЬ (ГОРОД)', 'gold', () => {
+                    state.mode = 'CITY';
+                    state.citySubMode = 'VIEW';
+                }, 17);
+
+                drawArcadeButton('btn_quick', btnX, btnStartY + 60, btnW, 46, 'БЫСТРАЯ ИГРА', 'blue', () => {
+                    startBuild('blue', true);
+                }, 16);
+
+                // City Saved Progress Box
+                const stats = getCityStats();
+                const statY = btnStartY + 116;
+                drawArcadeBox(btnX, statY, btnW, 44, '#0F172A', '#1E293B', '#111827', '#38BDF8');
+
+                drawPixelPersonIcon(btnX + 22, statY + 21, 0.95);
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = `800 13px 'Trebuchet MS', sans-serif`;
+                ctx.textAlign = 'left';
+                ctx.fillText(`ЖИТЕЛЕЙ: ${stats.totalPop}`, btnX + 38, statY + 22);
+
+                // Golden Roof count badge
+                ctx.fillStyle = '#FFD700';
+                ctx.textAlign = 'right';
+                ctx.fillText(`ЗОЛ.КРЫШ: ${stats.goldenCount}`, btnX + btnW - 12, statY + 22);
+
+                // Small Reset Button in bottom-left & Mute in top-right
+                drawArcadeButton('btn_mute_title', W - 52, 12, 40, 38, '', 'dark', () => {
+                    sfx.toggleMute();
+                });
+                drawSoundIcon(W - 32, 31, sfx.muted);
+
+                const resetLabel = state.resetConfirm ? 'ТОЧНО СБРОС?' : 'СБРОС ГОРОДА';
+                drawArcadeButton('btn_reset_city', 12, H - 46, 128, 34, resetLabel, state.resetConfirm ? 'red' : 'dark', () => {
+                    if (!state.resetConfirm) {
+                        state.resetConfirm = true;
+                        setTimeout(() => { state.resetConfirm = false; }, 3000);
+                    } else {
+                        state.resetConfirm = false;
+                        state.cityGrid = createInitialGrid();
+                        state.pendingHouse = null;
+                        saveGrid();
+                        showBanner('ГОРОД СБРОШЕН', 1.8);
+                    }
+                }, 11);
+            }
+
+            // =========================================================
+            // 13. RENDER: CITY MAP 5x5 SCREEN
+            // =========================================================
+            function renderCityScreen() {
+                const { boardSize, roadW, lotSize, startX, startY } = getCityGeometry();
+
+                // Lush Green Grass Meadow
+                ctx.fillStyle = '#2E9E44';
+                ctx.fillRect(0, 0, W, H);
+
+                // Subtle pixel grass tufts
+                ctx.fillStyle = '#248236';
+                for (let gx = 16; gx < W; gx += 44) {
+                    for (let gy = 76; gy < H - 70; gy += 44) {
+                        ctx.fillRect(gx, gy, 4, 4);
+                        ctx.fillRect(gx + 6, gy + 2, 4, 4);
+                    }
+                }
+
+                // Outer City Board Frame & Asphalt Road Network
+                drawArcadeBox(
+                    startX - 4,
+                    startY - 4,
+                    boardSize + 8,
+                    boardSize + 8,
+                    '#475569',
+                    '#334155',
+                    '#111827',
+                    '#94A3B8'
+                );
+
+                // Road Center Markings & Intersection Crosswalks
+                ctx.strokeStyle = '#F8FAFC';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([6, 6]);
+                for (let i = 0; i <= GRID_SIZE; i++) {
+                    const rx = startX + roadW / 2 + i * (lotSize + roadW);
+                    ctx.beginPath();
+                    ctx.moveTo(rx, startY + 4);
+                    ctx.lineTo(rx, startY + boardSize - 4);
+                    ctx.stroke();
+
+                    const ry = startY + roadW / 2 + i * (lotSize + roadW);
+                    ctx.beginPath();
+                    ctx.moveTo(startX + 4, ry);
+                    ctx.lineTo(startX + boardSize - 4, ry);
+                    ctx.stroke();
+                }
+                ctx.setLineDash([]);
+
+                // Crisp white zebra crosswalk stripes near intersections
+                ctx.fillStyle = 'rgba(248, 250, 252, 0.72)';
+                for (let r = 1; r < GRID_SIZE; r++) {
+                    for (let c = 1; c < GRID_SIZE; c++) {
+                        const ix = startX + c * (lotSize + roadW);
+                        const iy = startY + r * (lotSize + roadW);
+                        ctx.fillRect(ix - 5, iy + 2, 3, roadW - 4);
+                        ctx.fillRect(ix + roadW + 2, iy + 2, 3, roadW - 4);
+                    }
+                }
+
+                // Moving Cars along Avenues
+                for (const car of state.cars) {
+                    ctx.fillStyle = car.color;
+                    ctx.strokeStyle = '#111827';
+                    ctx.lineWidth = 1.8;
+                    if (car.axis === 'h') {
+                        const cy = startY + roadW / 2 + car.road * (lotSize + roadW);
+                        const cx = startX + car.t * boardSize;
+                        if (cx > startX + 4 && cx < startX + boardSize - 4) {
+                            ctx.fillRect(cx - 7, cy - 4, 14, 8);
+                            ctx.strokeRect(cx - 7, cy - 4, 14, 8);
+                        }
+                    } else {
+                        const cx = startX + roadW / 2 + car.road * (lotSize + roadW);
+                        const cy = startY + car.t * boardSize;
+                        if (cy > startY + 4 && cy < startY + boardSize - 4) {
+                            ctx.fillRect(cx - 4, cy - 7, 8, 14);
+                            ctx.strokeRect(cx - 4, cy - 7, 8, 14);
+                        }
+                    }
+                }
+
+                // Tiny Walking Citizens on Sidewalks
+                for (const ped of state.pedestrians) {
+                    ctx.fillStyle = ped.shirt;
+                    if (ped.axis === 'h') {
+                        const py = startY + roadW / 2 + ped.road * (lotSize + roadW) + ped.side * (roadW * 0.35);
+                        const px = startX + ped.t * boardSize;
+                        if (px > startX && px < startX + boardSize) ctx.fillRect(px - 2, py - 2, 4, 4);
+                    } else {
+                        const px = startX + roadW / 2 + ped.road * (lotSize + roadW) + ped.side * (roadW * 0.35);
+                        const py = startY + ped.t * boardSize;
+                        if (py > startY && py < startY + boardSize) ctx.fillRect(px - 2, py - 2, 4, 4);
+                    }
+                }
+
+                // 5x5 Lots & 2.5D Buildings
+                const blink = 0.5 + 0.5 * Math.sin(state.animClock * 7);
+
+                for (let r = 0; r < GRID_SIZE; r++) {
+                    for (let c = 0; c < GRID_SIZE; c++) {
+                        const rect = getLotRect(r, c);
+                        const cell = state.cityGrid[r][c];
+
+                        // Grass Lot Base
+                        ctx.fillStyle = cell ? '#4ADE80' : '#86EFAC';
+                        ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+                        ctx.strokeStyle = '#111827';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+
+                        if (!cell) {
+                            // Inner dirt construction plot + tiny decorative park bushes on corners
+                            const pad = Math.round(rect.w * 0.16);
+                            ctx.fillStyle = '#BEF264';
+                            ctx.fillRect(rect.x + pad, rect.y + pad, rect.w - pad * 2, rect.h - pad * 2);
+
+                            // Pixel corner bushes
+                            ctx.fillStyle = '#15803D';
+                            ctx.fillRect(rect.x + 3, rect.y + 3, 5, 5);
+                            ctx.fillRect(rect.x + rect.w - 8, rect.y + 3, 5, 5);
+
+                            if (state.citySubMode === 'PLACING' && state.pendingHouse) {
+                                const check = evaluatePlacement(r, c, state.pendingHouse.type, state.pendingHouse);
+                                if (check.valid) {
+                                    ctx.fillStyle = `rgba(250, 204, 21, ${0.35 + blink * 0.35})`;
+                                    ctx.fillRect(rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4);
+                                    ctx.strokeStyle = '#FFD700';
+                                    ctx.lineWidth = 3;
+                                    ctx.strokeRect(rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4);
+
+                                    // Show exact population yield on this lot
+                                    ctx.fillStyle = '#111827';
+                                    ctx.font = `900 ${Math.max(10, Math.round(rect.w * 0.21))}px 'Arial Black', sans-serif`;
+                                    ctx.textAlign = 'center';
+                                    ctx.textBaseline = 'middle';
+                                    ctx.fillText(`+${check.pop}`, rect.x + rect.w / 2, rect.y + rect.h / 2);
+                                } else {
+                                    ctx.fillStyle = 'rgba(15, 23, 42, 0.42)';
+                                    ctx.fillRect(rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4);
+                                }
+                            } else {
+                                // '+' marker on empty plot
+                                ctx.fillStyle = '#15803D';
+                                ctx.font = `900 ${Math.round(rect.w * 0.34)}px 'Arial Black', sans-serif`;
+                                ctx.textAlign = 'center';
+                                ctx.textBaseline = 'middle';
+                                ctx.fillText('+', rect.x + rect.w / 2, rect.y + rect.h / 2 + 1);
+                            }
+
+                            if (state.citySubMode === 'VIEW' || state.citySubMode === 'PLACING') {
+                                registerHitbox(`lot_${r}_${c}`, rect.x, rect.y, rect.w, rect.h, () => {
+                                    if (state.citySubMode === 'PLACING') {
+                                        placePendingHouse(r, c);
+                                    } else {
+                                        sfx.click();
+                                        state.selectedLot = { r, c };
+                                        state.citySubMode = 'SELECT_BUILDING';
+                                    }
+                                });
+                            }
+                        } else {
+                            drawCityLotBuilding(rect, cell, state.citySubMode === 'DEMOLISH');
+
+                            registerHitbox(`occ_${r}_${c}`, rect.x, rect.y, rect.w, rect.h, () => {
+                                if (state.citySubMode === 'DEMOLISH') {
+                                    sfx.miss();
+                                    const pt = getLotCenter(r, c);
+                                    addParticles(pt.x, pt.y, '#94A3B8', 18, 1.0);
+                                    state.cityGrid[r][c] = null;
+                                    state.citySubMode = 'VIEW';
+                                    saveGrid();
+                                    showBanner('ЗДАНИЕ СНЕСЕНО', 1.6);
+                                } else if (state.citySubMode === 'VIEW') {
+                                    sfx.click();
+                                    const t = BUILDING_TYPES[cell.type];
+                                    const gTag = cell.isGoldenRoof ? ' [ЗОЛ.КРЫША]' : '';
+                                    showBanner(`${t.name}${gTag}: +${cell.finalPop} ЖИТ.`, 2.0);
+                                }
+                            });
+                        }
+                    }
+                }
+
+                // =======================================
+                // TOP J2ME CITY HUD BAR
+                // =======================================
+                const stats = getCityStats();
+                const targetPop = getNextTargetPop(stats.totalPop);
+                const topH = 54;
+
+                drawArcadeBox(6, 6, W - 12, topH, '#1E3A8A', '#0F172A', '#111827', '#38BDF8');
+
+                // Population Counter
+                drawPixelPersonIcon(26, 32, 1.05);
+                ctx.fillStyle = '#FACC15';
+                ctx.font = `900 15px 'Arial Black', sans-serif`;
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(`${stats.totalPop}`, 42, 24);
+
+                ctx.fillStyle = '#93C5FD';
+                ctx.font = `800 10px 'Trebuchet MS', sans-serif`;
+                ctx.fillText(`ЦЕЛЬ: ${targetPop}`, 42, 42);
+
+                // Progress bar in center
+                const barX = Math.min(145, W * 0.36);
+                const barW = Math.max(60, W - barX - 116);
+                ctx.fillStyle = '#020617';
+                ctx.fillRect(barX, 22, barW, 20);
+                ctx.strokeStyle = '#94A3B8';
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(barX, 22, barW, 20);
+
+                const pct = Math.min(1, stats.totalPop / targetPop);
+                ctx.fillStyle = '#22C55E';
+                ctx.fillRect(barX + 2, 24, Math.max(0, (barW - 4) * pct), 16);
+
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = `900 10px 'Arial Black', sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText(`${Math.round(pct * 100)}%`, barX + barW / 2, 32);
+
+                // Sound & Menu Buttons
+                drawArcadeButton('city_mute', W - 104, 13, 38, 40, '', 'dark', () => {
+                    sfx.toggleMute();
+                });
+                drawSoundIcon(W - 85, 33, sfx.muted);
+
+                drawArcadeButton('city_menu', W - 62, 13, 50, 40, 'МЕНЮ', 'gold', () => {
+                    state.mode = 'TITLE';
+                    state.citySubMode = 'VIEW';
+                }, 11);
+
+                // =======================================
+                // BOTTOM CITY ACTION BAR
+                // =======================================
+                const botY = H - 56;
+                if (state.citySubMode === 'PLACING' && state.pendingHouse) {
+                    const t = BUILDING_TYPES[state.pendingHouse.type];
+                    drawArcadeBox(8, botY, W - 16, 48, '#065F46', '#064E3B', '#111827', '#4ADE80');
+                    drawMiniHouseIcon(32, botY + 24, t, state.pendingHouse.isGoldenRoof, 0.85);
+
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.font = `900 12px 'Arial Black', sans-serif`;
+                    ctx.textAlign = 'left';
+                    ctx.fillText(
+                        state.pendingHouse.isGoldenRoof ? `${t.name} (ЗОЛОТАЯ x2)` : t.name,
+                        54,
+                        botY + 18
+                    );
+                    ctx.fillStyle = '#FACC15';
+                    ctx.font = `800 11px 'Trebuchet MS', sans-serif`;
+                    ctx.fillText('НАЖМИ НА МИГАЮЩИЙ УЧАСТОК', 54, botY + 35);
+
+                    drawArcadeButton('cancel_place', W - 92, botY + 6, 78, 36, 'ОТМЕНА', 'red', () => {
+                        state.pendingHouse = null;
+                        state.citySubMode = 'VIEW';
+                    }, 11);
+                } else {
+                    const buildW = Math.min(230, W - 114);
+                    const totalW = buildW + 86;
+                    const startBtnX = (W - totalW) / 2;
+
+                    drawArcadeButton('btn_open_build', startBtnX, botY, buildW, 48, 'ПОСТРОИТЬ ДОМ', 'gold', () => {
+                        state.selectedLot = null;
+                        state.citySubMode = 'SELECT_BUILDING';
+                    }, 15);
+
+                    const isDem = state.citySubMode === 'DEMOLISH';
+                    drawArcadeButton('btn_demolish', startBtnX + buildW + 8, botY, 78, 48, isDem ? 'ОТМЕНА' : 'СНОС', isDem ? 'red' : 'dark', () => {
+                        state.citySubMode = isDem ? 'VIEW' : 'DEMOLISH';
+                        if (!isDem) showBanner('ВЫБЕРИ ДОМ ДЛЯ СНОСА', 2.0);
+                    }, 12);
+                }
+
+                // =======================================
+                // CLASSIC J2ME BUILDING SELECTOR MODAL
+                // =======================================
+                if (state.citySubMode === 'SELECT_BUILDING') {
+                    renderBuildingSelectorOverlay();
+                }
+            }
+
+            function drawCityLotBuilding(rect, cell, isDemolish) {
+                const t = BUILDING_TYPES[cell.type];
+                const lift = (cell.dropAnim || 0) * 34;
+                const towerH = Math.min(rect.h * 0.65, 10 + cell.floors * 0.9);
+
+                const bx = rect.x + rect.w * 0.14;
+                const bw = rect.w * 0.72;
+                const baseTop = rect.y + rect.h * 0.24 - lift;
+                const bh = rect.h * 0.62;
+                const roofTop = baseTop - towerH * 0.42;
+
+                // Hard ground shadow
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
+                ctx.fillRect(bx + 4, rect.y + rect.h * 0.27, bw, bh);
+
+                // Vertical facade body
+                ctx.fillStyle = t.wallDark;
+                ctx.fillRect(bx, roofTop, bw, bh + towerH * 0.42);
+
+                // Top roof platform
+                ctx.fillStyle = cell.isGoldenRoof ? '#FFD700' : t.wall;
+                ctx.fillRect(bx, roofTop, bw, bh * 0.76);
+
+                // Inner roof cap / Rooftop HVAC & Golden Spire
+                const inset = bw * 0.18;
+                ctx.fillStyle = cell.isGoldenRoof ? '#FFFBEB' : t.roof;
+                ctx.fillRect(bx + inset, roofTop + inset * 0.8, bw - inset * 2, bh * 0.76 - inset * 1.6);
+
+                if (cell.isGoldenRoof) {
+                    // Golden center spire + periodic sparkle glint
+                    ctx.fillStyle = '#F59E0B';
+                    ctx.beginPath();
+                    ctx.arc(bx + bw / 2, roofTop + bh * 0.38, bw * 0.15, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    const glint = Math.max(0, Math.sin(state.animClock * 5 + rect.x));
+                    if (glint > 0.75) {
+                        ctx.fillStyle = '#FFFFFF';
+                        ctx.fillRect(bx + bw * 0.25, roofTop + bh * 0.2, 4, 4);
+                    }
+                } else {
+                    // Classic rooftop vent / skylight box
+                    ctx.fillStyle = t.trim;
+                    ctx.fillRect(bx + inset + 3, roofTop + inset + 2, bw * 0.22, bh * 0.2);
+                }
+
+                // Crisp pixel border
+                ctx.strokeStyle = isDemolish ? '#EF4444' : '#111827';
+                ctx.lineWidth = isDemolish ? 3 : 2;
+                ctx.strokeRect(bx, roofTop, bw, bh + towerH * 0.42);
+
+                // Population tag bar at bottom of lot
+                const tagH = Math.max(13, Math.round(rect.h * 0.22));
+                const tagY = rect.y + rect.h - tagH - 2;
+                ctx.fillStyle = '#111827';
+                ctx.fillRect(rect.x + 4, tagY, rect.w - 8, tagH);
+
+                ctx.fillStyle = cell.isGoldenRoof ? '#FFD700' : '#FFFFFF';
+                ctx.font = `900 ${Math.max(9, Math.round(tagH * 0.74))}px 'Arial Black', sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(`${cell.finalPop}`, rect.x + rect.w / 2, tagY + tagH / 2 + 0.5);
+            }
+
+            function renderBuildingSelectorOverlay() {
+                // Dim background
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+                ctx.fillRect(0, 0, W, H);
+
+                const modalW = Math.min(350, W - 20);
+                const rowH = 62;
+                const modalH = 62 + BUILDING_ORDER.length * (rowH + 8);
+                const mx = Math.round((W - modalW) / 2);
+                const my = Math.round((H - modalH) / 2);
+
+                drawArcadeBox(mx, my, modalW, modalH, '#1E3A8A', '#0F172A', '#111827', '#FACC15');
+
+                ctx.fillStyle = '#FACC15';
+                ctx.font = `900 16px 'Arial Black', sans-serif`;
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('ВЫБЕРИ ТИП ДОМА', mx + 14, my + 26);
+
+                drawArcadeButton('close_selector', mx + modalW - 44, my + 8, 34, 34, 'X', 'red', () => {
+                    state.citySubMode = 'VIEW';
+                    state.selectedLot = null;
+                }, 14);
+
+                const stats = getCityStats();
+
+                BUILDING_ORDER.forEach((typeId, idx) => {
+                    const t = BUILDING_TYPES[typeId];
+                    const ry = my + 50 + idx * (rowH + 8);
+                    const rx = mx + 10;
+                    const rw = modalW - 20;
+
+                    const unlocked = stats.totalPop >= t.unlockPop;
+                    const canPlace = state.selectedLot
+                        ? evaluatePlacement(state.selectedLot.r, state.selectedLot.c, typeId).valid
+                        : hasAnyValidTileForType(typeId);
+                    const enabled = unlocked && canPlace;
+
+                    drawArcadeBox(
+                        rx,
+                        ry,
+                        rw,
+                        rowH,
+                        enabled ? '#F8FAFC' : '#64748B',
+                        enabled ? '#CBD5E1' : '#475569',
+                        '#111827',
+                        enabled ? '#FFFFFF' : '#94A3B8'
+                    );
+
+                    drawMiniHouseIcon(rx + 28, ry + rowH / 2 + 2, t, false, 1.05);
+                    if (!unlocked) {
+                        drawLockIcon(rx + 28, ry + rowH / 2 + 4);
+                    }
+
+                    ctx.textAlign = 'left';
+                    ctx.fillStyle = enabled ? '#111827' : '#E2E8F0';
+                    ctx.font = `900 13px 'Arial Black', sans-serif`;
+                    ctx.fillText(t.name, rx + 54, ry + 18);
+
+                    ctx.fillStyle = enabled ? '#1E3A8A' : '#CBD5E1';
+                    ctx.font = `800 11px 'Trebuchet MS', sans-serif`;
+                    ctx.fillText(t.subtitle, rx + 54, ry + 35);
+
+                    const statusMsg = !unlocked
+                        ? `НУЖНО ${t.unlockPop} ЖИТЕЛЕЙ`
+                        : !canPlace
+                        ? t.ruleShort.toUpperCase()
+                        : `УСЛОВИЕ: ${t.ruleShort.toUpperCase()}`;
+
+                    ctx.fillStyle = enabled ? '#15803D' : '#FECACA';
+                    ctx.font = `900 10px 'Arial Black', sans-serif`;
+                    ctx.fillText(statusMsg, rx + 54, ry + 50);
+
+                    if (enabled) {
+                        registerHitbox(`pick_${typeId}`, rx, ry, rw, rowH, () => {
+                            sfx.click();
+                            state.citySubMode = 'VIEW';
+                            startBuild(typeId, false);
+                        });
+                    }
+                });
+            }
+
+            // =========================================================
+            // 14. RENDER: TOWER BUILD SCREEN + GOLDEN ROOF TARGET ZONE
+            // =========================================================
+            function renderBuildScreen() {
+                const b = state.build;
+                const alt = b.cameraY;
+
+                // Daylight -> Stratosphere -> Night Space Sky
+                let cTop = '#0284C7';
+                let cBot = '#BAE6FD';
+                let starAlpha = 0;
+
+                if (alt > 650 && alt <= 1750) {
+                    const t = (alt - 650) / 1100;
+                    cTop = lerpColor('#0284C7', '#1E3A8A', t);
+                    cBot = lerpColor('#BAE6FD', '#60A5FA', t);
+                } else if (alt > 1750) {
+                    const t = Math.min(1, (alt - 1750) / 1200);
+                    cTop = lerpColor('#1E3A8A', '#090D16', t);
+                    cBot = lerpColor('#60A5FA', '#1E1B4B', t);
+                    starAlpha = t * 0.9;
+                }
+
+                const sky = ctx.createLinearGradient(0, 0, 0, H);
+                sky.addColorStop(0, cTop);
+                sky.addColorStop(1, cBot);
+                ctx.fillStyle = sky;
+                ctx.fillRect(0, 0, W, H);
+
+                if (starAlpha > 0.02) {
+                    for (const s of state.stars) {
+                        const tw = 0.5 + 0.5 * Math.sin(state.animClock * 4 + s.phase);
+                        ctx.fillStyle = `rgba(255,255,255,${starAlpha * tw})`;
+                        ctx.fillRect(s.x * W, s.y * H, s.r * 1.6, s.r * 1.6);
+                    }
+                }
+
+                // Clouds
+                for (const c of state.clouds) {
+                    const cy = (H - 120 - c.alt) + b.cameraY * 0.65;
+                    if (cy > -80 && cy < H + 80) {
+                        drawCloud2005(c.x * W, cy, c.scale);
+                    }
+                }
+
+                // Retro Pixel Seagulls / Birds flying in mid-sky
+                for (const bird of state.birds) {
+                    const by = (H - 120 - bird.alt) + b.cameraY * 0.72;
+                    if (by > 40 && by < H - 80) {
+                        const bx = bird.x * W;
+                        const wing = Math.sin(bird.flap) * 4;
+                        ctx.strokeStyle = '#111827';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(bx - 7, by - wing);
+                        ctx.quadraticCurveTo(bx - 3, by - 4, bx, by);
+                        ctx.quadraticCurveTo(bx + 3, by - 4, bx + 7, by - wing);
+                        ctx.stroke();
+                    }
+                }
+
+                // Ground Street
+                const groundY = (H - 84) + b.cameraY;
+                if (groundY < H + 150) {
+                    drawBuildStreet(groundY);
+                }
+
+                // World Camera + Shake
+                ctx.save();
+                let sx = 0, sy = 0;
+                if (b.shakeTime > 0) {
+                    sx = (Math.random() - 0.5) * 2 * b.shakeMag;
+                    sy = (Math.random() - 0.5) * 2 * b.shakeMag;
+                }
+                ctx.translate(sx, b.cameraY + sy);
+
+                // Tower Blocks
+                for (const blk of b.blocks) {
+                    drawTowerBlock2005(blk, 0);
+                }
+
+                // Visual Golden Roof Target Zone on top floor when Roof is swinging!
+                if (b.activeBlock && b.activeBlock.state === 'SWINGING') {
+                    const ab = b.activeBlock;
+                    const top = b.blocks[b.blocks.length - 1];
+                    const supportW = top.isBase ? b.baseBlockW : top.w;
+                    const centerTol = Math.max(9, Math.min(supportW, ab.w) * 0.11);
+                    const aligned = Math.abs(ab.x - top.x) <= centerTol;
+
+                    if (ab.isRoof) {
+                        const topEdgeY = top.y - top.h / 2;
+                        if (b.flawless) {
+                            // Highlighted Golden Center Target Zone bar on the top floor
+                            ctx.fillStyle = aligned ? '#FFD700' : 'rgba(255, 215, 0, 0.55)';
+                            ctx.fillRect(top.x - centerTol, topEdgeY - 5, centerTol * 2, 5);
+                            ctx.strokeStyle = '#111827';
+                            ctx.lineWidth = 1.5;
+                            ctx.strokeRect(top.x - centerTol, topEdgeY - 5, centerTol * 2, 5);
+                        }
+                    }
+
+                    // Dotted drop guide
+                    ctx.save();
+                    ctx.setLineDash([5, 5]);
+                    ctx.lineWidth = aligned ? 2.5 : 1.5;
+                    ctx.strokeStyle = aligned ? '#FFD700' : 'rgba(255, 255, 255, 0.45)';
+                    ctx.beginPath();
+                    ctx.moveTo(ab.x, ab.y + ab.h / 2 + 3);
+                    ctx.lineTo(ab.x, top.y - top.h / 2);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
+                // Crane & Active Block
+                drawCrane2005();
+                if (b.activeBlock) {
+                    drawTowerBlock2005(b.activeBlock, b.activeBlock.angle || 0);
+                }
+
+                // Falling Blocks
+                for (const fb of b.fallingBlocks) {
+                    drawTowerBlock2005(fb, fb.angle);
+                }
+
+                // Sheared Overhang Masonry Debris Chunks
+                for (const dc of b.debrisChunks) {
+                    ctx.save();
+                    ctx.translate(dc.x, dc.y);
+                    ctx.rotate(dc.angle);
+                    ctx.fillStyle = dc.color;
+                    ctx.fillRect(-dc.w / 2, -dc.h / 2, dc.w, dc.h);
+                    ctx.fillStyle = dc.trimColor;
+                    ctx.fillRect(-dc.w / 2, -dc.h / 2, dc.w, Math.max(2, dc.h * 0.28));
+                    ctx.strokeStyle = '#111827';
+                    ctx.lineWidth = 1.8;
+                    ctx.strokeRect(-dc.w / 2, -dc.h / 2, dc.w, dc.h);
+                    ctx.restore();
+                }
+
+                // Parachuting Citizens
+                for (const p of b.parachutists) {
+                    drawParachuteCitizen(p);
+                }
+
+                ctx.restore();
+
+                // =======================================
+                // TOP J2ME BUILD HUD BAR
+                // =======================================
+                drawArcadeBox(6, 6, W - 12, 52, '#1E3A8A', '#0F172A', '#111827', '#FACC15');
+
+                // Residents / Score Counter
+                drawPixelPersonIcon(24, 31, 1.0);
+                ctx.fillStyle = '#FACC15';
+                ctx.font = `900 16px 'Arial Black', sans-serif`;
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(b.isQuickPlay ? `${b.score}` : `${b.residents}`, 39, 32);
+
+                // Floor Counter Badge (e.g. 05/10 or КРЫША!)
+                const floorText = b.isQuickPlay
+                    ? `${b.blocks.length} ЭТ`
+                    : b.roofPhase
+                    ? 'КРЫША!'
+                    : `${String(b.blocks.length).padStart(2, '0')}/${b.tier.floors}`;
+
+                const badgeX = Math.min(116, W * 0.31);
+                ctx.fillStyle = b.roofPhase ? '#FFD700' : '#020617';
+                ctx.fillRect(badgeX, 17, 74, 30);
+                ctx.strokeStyle = '#94A3B8';
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(badgeX, 17, 74, 30);
+
+                ctx.fillStyle = b.roofPhase ? '#111827' : '#FFFFFF';
+                ctx.font = `900 12px 'Arial Black', sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText(floorText, badgeX + 37, 32);
+
+                // 3 Classic Red Hearts
+                const heartsStartX = W - 144;
+                for (let i = 0; i < 3; i++) {
+                    drawPixelHeartIcon(heartsStartX + i * 22, 32, i < b.lives, 0.92);
+                }
+
+                // Sound & Exit buttons
+                drawArcadeButton('build_mute', W - 78, 13, 34, 38, '', 'dark', () => {
+                    sfx.toggleMute();
+                });
+                drawSoundIcon(W - 61, 32, sfx.muted);
+
+                drawArcadeButton('build_exit', W - 40, 13, 28, 38, 'X', 'red', () => {
+                    if (b.isQuickPlay) {
+                        state.mode = 'TITLE';
+                    } else {
+                        state.mode = 'CITY';
+                        state.citySubMode = 'VIEW';
+                    }
+                }, 13);
+
+                // Combo / Golden Roof Hint Strip under HUD
+                if (b.roofPhase && !b.failed && b.completeTimer <= 0) {
+                    const tagW = Math.min(286, W - 24);
+                    if (b.flawless) {
+                        drawArcadeBox((W - tagW) / 2, 64, tagW, 26, '#FFD700', '#F59E0B', '#111827', '#FFFBEB');
+                        ctx.fillStyle = '#111827';
+                        ctx.font = `900 10px 'Arial Black', sans-serif`;
+                        ctx.textAlign = 'center';
+                        ctx.fillText('ДОМ БЕЗ ОШИБОК! ПОПАДИ В ЦЕНТР ДЛЯ ЗОЛОТА x2', W / 2, 77);
+                    } else {
+                        drawArcadeBox((W - tagW) / 2, 64, tagW, 26, '#334155', '#1E293B', '#111827', '#94A3B8');
+                        ctx.fillStyle = '#F8FAFC';
+                        ctx.font = `900 10px 'Arial Black', sans-serif`;
+                        ctx.textAlign = 'center';
+                        ctx.fillText('УСТАНОВИТЕ КРЫШУ НА ДОМ', W / 2, 77);
+                    }
+                } else if (b.combo >= 2) {
+                    drawArcadeBox(10, 64, 126, 26, '#FACC15', '#EA580C', '#111827', '#FEF08A');
+                    ctx.fillStyle = '#111827';
+                    ctx.font = `900 12px 'Arial Black', sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`КОМБО x${b.combo}`, 73, 77);
+                }
+
+                // =======================================
+                // GAME OVER MODAL (CLASSIC J2ME DIALOG)
+                // =======================================
+                if (b.failed) {
+                    renderBuildFailedOverlay();
+                }
+            }
+
+            function drawBuildStreet(groundY) {
+                // Background buildings
+                const bg = [
+                    { x: 0.03, w: 0.14, h: 130, c: '#3B82F6' },
+                    { x: 0.16, w: 0.12, h: 175, c: '#60A5FA' },
+                    { x: 0.70, w: 0.13, h: 160, c: '#60A5FA' },
+                    { x: 0.82, w: 0.15, h: 120, c: '#3B82F6' }
+                ];
+                bg.forEach(s => {
+                    ctx.fillStyle = s.c;
+                    ctx.strokeStyle = '#1E3A8A';
+                    ctx.lineWidth = 2;
+                    ctx.fillRect(s.x * W, groundY - s.h, s.w * W, s.h);
+                    ctx.strokeRect(s.x * W, groundY - s.h, s.w * W, s.h);
+                });
+
+                // Grass strip
+                ctx.fillStyle = '#16A34A';
+                ctx.fillRect(0, groundY, W, 18);
+                ctx.strokeStyle = '#111827';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(0, groundY);
+                ctx.lineTo(W, groundY);
+                ctx.stroke();
+
+                // Road
+                ctx.fillStyle = '#334155';
+                ctx.fillRect(0, groundY + 18, W, 66);
+                ctx.fillStyle = '#FACC15';
+                for (let x = 14; x < W; x += 54) {
+                    ctx.fillRect(x, groundY + 46, 26, 5);
+                }
+
+                // Concrete foundation slab
+                const padW = Math.min(210, W * 0.45);
+                ctx.fillStyle = '#CBD5E1';
+                ctx.strokeStyle = '#111827';
+                ctx.lineWidth = 2.5;
+                ctx.fillRect(W / 2 - padW / 2, groundY - 6, padW, 12);
+                ctx.strokeRect(W / 2 - padW / 2, groundY - 6, padW, 12);
+            }
+
+            function drawCrane2005() {
+                const b = state.build;
+                const px = W / 2;
+                const py = -b.cameraY + 66;
+                const halfBoom = Math.min(W * 0.44, 195);
+
+                ctx.save();
+                // Full-width Horizontal Crane Boom & Rail
+                ctx.fillStyle = '#FACC15';
+                ctx.strokeStyle = '#111827';
+                ctx.lineWidth = 2.5;
+                ctx.fillRect(px - halfBoom, py - 14, halfBoom * 2, 14);
+                ctx.strokeRect(px - halfBoom, py - 14, halfBoom * 2, 14);
+
+                // Red Truss Zigzag along the entire boom
+                ctx.strokeStyle = '#DC2626';
+                ctx.lineWidth = 2.6;
+                ctx.beginPath();
+                const step = 16;
+                let tx = px - halfBoom + 8;
+                let up = false;
+                ctx.moveTo(tx, py - 2);
+                while (tx + step <= px + halfBoom - 8) {
+                    tx += step;
+                    up = !up;
+                    ctx.lineTo(tx, up ? py - 12 : py - 2);
+                }
+                ctx.stroke();
+
+                // End Stopper Bumpers on Boom
+                ctx.fillStyle = '#DC2626';
+                ctx.fillRect(px - halfBoom - 3, py - 16, 6, 18);
+                ctx.strokeRect(px - halfBoom - 3, py - 16, 6, 18);
+                ctx.fillRect(px + halfBoom - 3, py - 16, 6, 18);
+                ctx.strokeRect(px + halfBoom - 3, py - 16, 6, 18);
+
+                // Trolley Carriage X position (follows active block while riding, or center when dropping)
+                const trolleyX = (b.activeBlock && b.activeBlock.state === 'SWINGING')
+                    ? b.activeBlock.x
+                    : px + b.crane.angle * Math.min(W * 0.34, 155);
+
+                // Rolling Trolley Carriage on the Rail
+                ctx.fillStyle = '#1E293B';
+                ctx.fillRect(trolleyX - 14, py - 17, 28, 20);
+                ctx.strokeRect(trolleyX - 14, py - 17, 28, 20);
+
+                // Trolley Wheels
+                ctx.fillStyle = '#FACC15';
+                ctx.beginPath();
+                ctx.arc(trolleyX - 8, py - 7, 3.5, 0, Math.PI * 2);
+                ctx.arc(trolleyX + 8, py - 7, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                if (b.activeBlock && b.activeBlock.state === 'SWINGING') {
+                    const ab = b.activeBlock;
+                    const hx = ab.x;
+                    const hy = ab.y - ab.h / 2;
+
+                    // Straight Vertical Hoist Cable from Trolley
+                    ctx.strokeStyle = '#111827';
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    ctx.moveTo(trolleyX, py + 3);
+                    ctx.lineTo(hx, hy);
+                    ctx.stroke();
+
+                    ctx.strokeStyle = '#F8FAFC';
+                    ctx.lineWidth = 1.6;
+                    ctx.beginPath();
+                    ctx.moveTo(trolleyX, py + 3);
+                    ctx.lineTo(hx, hy);
+                    ctx.stroke();
+
+                    // Claw Hook
+                    ctx.fillStyle = '#FACC15';
+                    ctx.strokeStyle = '#111827';
+                    ctx.lineWidth = 2;
+                    ctx.fillRect(hx - 7, hy - 6, 14, 7);
+                    ctx.strokeRect(hx - 7, hy - 6, 14, 7);
+                }
+                ctx.restore();
+            }
+
+            function drawParachuteCitizen(p) {
+                ctx.save();
+                ctx.translate(p.x, p.y);
+
+                // Canopy
+                ctx.fillStyle = p.canopy;
+                ctx.strokeStyle = '#111827';
+                ctx.lineWidth = 1.8;
+                ctx.beginPath();
+                ctx.arc(0, -17, 11, Math.PI, 0, false);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                // Lines
+                ctx.strokeStyle = '#111827';
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.moveTo(-9, -17);
+                ctx.lineTo(-2, -5);
+                ctx.moveTo(9, -17);
+                ctx.lineTo(2, -5);
+                ctx.stroke();
+
+                // Body & Head
+                ctx.fillStyle = p.shirt;
+                ctx.fillRect(-3, -5, 6, 6);
+                ctx.fillStyle = '#FFE0B2';
+                ctx.beginPath();
+                ctx.arc(0, -8, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.restore();
+            }
+
+            function renderBuildFailedOverlay() {
+                const b = state.build;
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+                ctx.fillRect(0, 0, W, H);
+
+                const mw = Math.min(310, W - 32);
+                const mh = 230;
+                const mx = (W - mw) / 2;
+                const my = (H - mh) / 2;
+
+                drawArcadeBox(mx, my, mw, mh, '#1E3A8A', '#0F172A', '#111827', '#EF4444');
+
+                ctx.fillStyle = '#FF5252';
+                ctx.font = `900 22px 'Arial Black', sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('СТРОЙКА ПРЕРВАНА', W / 2, my + 34);
+
+                ctx.fillStyle = '#E2E8F0';
+                ctx.font = `800 13px 'Trebuchet MS', sans-serif`;
+                ctx.fillText(
+                    b.isQuickPlay
+                        ? `СЧЁТ: ${b.score}  •  ЭТАЖЕЙ: ${b.blocks.length}`
+                        : `ПОСТРОЕНО: ${b.blocks.length}/${b.tier.floors} ЭТАЖЕЙ`,
+                    W / 2,
+                    my + 68
+                );
+
+                drawArcadeButton('retry_build', mx + 18, my + 98, mw - 36, 48, 'ПОПРОБОВАТЬ СНОВА', 'gold', () => {
+                    startBuild(b.tier.id, b.isQuickPlay);
+                }, 14);
+
+                drawArcadeButton(
+                    'abort_build',
+                    mx + 18,
+                    my + 158,
+                    mw - 36,
+                    44,
+                    b.isQuickPlay ? 'В ГЛАВНОЕ МЕНЮ' : 'НА КАРТУ ГОРОДА',
+                    'blue',
+                    () => {
+                        if (b.isQuickPlay) {
+                            state.mode = 'TITLE';
+                        } else {
+                            state.mode = 'CITY';
+                            state.citySubMode = 'VIEW';
+                        }
+                    },
+                    14
+                );
+            }
+
+            function lerpColor(a, b, t) {
+                const c1 = parseInt(a.slice(1), 16);
+                const c2 = parseInt(b.slice(1), 16);
+                const r = Math.round(((c1 >> 16) & 255) * (1 - t) + ((c2 >> 16) & 255) * t);
+                const g = Math.round(((c1 >> 8) & 255) * (1 - t) + ((c2 >> 8) & 255) * t);
+                const bl = Math.round((c1 & 255) * (1 - t) + (c2 & 255) * t);
+                return `rgb(${r},${g},${bl})`;
+            }
+
+            // =========================================================
+            // 15. MASTER RENDER PASS
+            // =========================================================
+            function render() {
+                state.hitboxes = [];
+                ctx.clearRect(0, 0, W, H);
+
+                if (state.mode === 'TITLE') {
+                    renderTitleScreen();
+                } else if (state.mode === 'CITY') {
+                    renderCityScreen();
+                } else if (state.mode === 'BUILD') {
+                    renderBuildScreen();
+                }
+
+                // Render Particles & Floating Popups
+                ctx.save();
+                if (state.mode === 'BUILD') {
+                    ctx.translate(0, state.build.cameraY);
+                }
+
+                for (const p of state.particles) {
+                    ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
+                    ctx.fillStyle = p.color;
+                    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+                    ctx.strokeStyle = '#111827';
+                    ctx.lineWidth = 1.2;
+                    ctx.strokeRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+                }
+                ctx.globalAlpha = 1;
+
+                for (const f of state.popups) {
+                    ctx.globalAlpha = Math.max(0, Math.min(1, f.life * 1.5));
+                    ctx.font = `900 ${Math.round(18 * f.scale)}px 'Arial Black', Impact, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillStyle = '#111827';
+                    ctx.fillText(f.text, f.x + 2, f.y + 2);
+                    ctx.fillStyle = f.color;
+                    ctx.fillText(f.text, f.x, f.y);
+                }
+                ctx.restore();
+
+                // Top-Center Arcade Toast Banner (when active)
+                if (state.toastTimer > 0 && state.toastText) {
+                    const tw = Math.min(320, W - 24);
+                    const tx = (W - tw) / 2;
+                    const ty = state.mode === 'CITY' ? 66 : 96;
+                    drawArcadeBox(tx, ty, tw, 32, '#0F172A', '#1E293B', '#111827', '#FACC15');
+                    ctx.fillStyle = '#FACC15';
+                    ctx.font = `900 11px 'Arial Black', sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(state.toastText, W / 2, ty + 16);
+                }
+            }
+
+            // =========================================================
+            // 16. UNIFIED POINTER & KEYBOARD INPUTS
+            // =========================================================
+            canvas.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                sfx.init();
+
+                const rect = canvas.getBoundingClientRect();
+                const px = e.clientX - rect.left;
+                const py = e.clientY - rect.top;
+
+                // Check registered UI hitboxes from top-most to bottom-most
+                for (let i = state.hitboxes.length - 1; i >= 0; i--) {
+                    const hb = state.hitboxes[i];
+                    if (px >= hb.x && px <= hb.x + hb.w && py >= hb.y && py <= hb.y + hb.h) {
+                        hb.onClick();
+                        return;
+                    }
+                }
+
+                // Otherwise, if in BUILD mode, release swinging block!
+                if (state.mode === 'BUILD') {
+                    dropBlock();
+                }
+            });
+
+            window.addEventListener('keydown', (e) => {
+                if (e.code === 'Space' || e.code === 'ArrowDown' || e.code === 'Enter') {
+                    if (state.mode === 'BUILD') {
+                        e.preventDefault();
+                        sfx.init();
+                        dropBlock();
+                    }
+                }
+            });
+
+            // =========================================================
+            // 17. MAIN GAME LOOP
+            // =========================================================
+            function loop(ts) {
+                if (!state.lastTime) state.lastTime = ts;
+                const dt = Math.min(0.05, (ts - state.lastTime) / 1000);
+                state.lastTime = ts;
+
+                update(dt);
+                render();
+
+                requestAnimationFrame(loop);
+            }
+
+            window.onload = function () {
+                requestAnimationFrame(loop);
+            };
+        })();
+    </script>
+</body>
+</html>
