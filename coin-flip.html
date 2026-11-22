@@ -1,0 +1,1749 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#0B0F19">
+    <title>Орёл или Решка — Игорная зона</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+            touch-action: manipulation;
+        }
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #0B0F19;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Inter, Arial, sans-serif;
+            color: #F8FAFC;
+        }
+        #appCanvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+        .goal-input {
+            position: fixed;
+            background: #0F172A;
+            border: 1.5px solid #38BDF8;
+            border-radius: 10px;
+            color: #F8FAFC;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Inter, Arial, sans-serif;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 0 10px;
+            outline: none;
+            z-index: 20;
+            text-align: center;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .goal-input::placeholder {
+            color: #64748B;
+            font-weight: 500;
+        }
+        .goal-input:focus {
+            border-color: #FACC15;
+            box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.25);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="appCanvas"></canvas>
+    <input id="headsGoalInput" class="goal-input" type="text" maxlength="26" placeholder="За что Орёл? (напр. Да)" autocomplete="off" />
+    <input id="tailsGoalInput" class="goal-input" type="text" maxlength="26" placeholder="За что Решка? (напр. Нет)" autocomplete="off" />
+
+    <script>
+        /**
+         * ОРЁЛ ИЛИ РЕШКА — Нумизматический симулятор подброса монеты с прогрессией (1 коп — 10 руб)
+         * Однофайловое приложение для портала Игорной зоны (index.html).
+         * Особенности:
+         *  - 8 номиналов: 1 коп, 5 коп, 10 коп, 50 коп, 1 руб, 2 руб, 5 руб, 10 руб
+         *  - Поля ввода «За что Орёл» и «За что Решка» + модальное окно победителя при выпадении
+         *  - Детальная процедурная гравировка аверса (Двуглавый орёл) и реверса (номинал, вензеля, биметалл)
+         *  - Сбалансированная прогрессия открытия следующих монет за броски
+         *  - Возврат к прошлым монетам даёт уменьшенный вклад в прогресс (×0.5 на 1 ступень ниже, ×0.25 на 2+ ступени ниже)
+         *  - Автосохранение прогресса в localStorage + window.name
+         */
+        (() => {
+            // =========================================================
+            // 1. CANVAS & HIGH-DPI RESPONSIVE SETUP
+            // =========================================================
+            const canvas = document.getElementById('appCanvas');
+            const ctx = canvas.getContext('2d');
+            const headsInput = document.getElementById('headsGoalInput');
+            const tailsInput = document.getElementById('tailsGoalInput');
+
+            let W = window.innerWidth;
+            let H = window.innerHeight;
+            let dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+            function positionGoalInputs() {
+                const ctrlW = Math.min(440, W - 28);
+                const ctrlX = (W - ctrlW) / 2;
+                const halfW = (ctrlW - 10) / 2;
+                const inpY = 166;
+                const inpH = 34;
+
+                headsInput.style.left = `${Math.round(ctrlX)}px`;
+                headsInput.style.top = `${inpY}px`;
+                headsInput.style.width = `${Math.round(halfW)}px`;
+                headsInput.style.height = `${inpH}px`;
+
+                tailsInput.style.left = `${Math.round(ctrlX + halfW + 10)}px`;
+                tailsInput.style.top = `${inpY}px`;
+                tailsInput.style.width = `${Math.round(halfW)}px`;
+                tailsInput.style.height = `${inpH}px`;
+            }
+
+            function resize() {
+                W = window.innerWidth;
+                H = window.innerHeight;
+                dpr = Math.min(window.devicePixelRatio || 1, 2);
+                canvas.width = Math.floor(W * dpr);
+                canvas.height = Math.floor(H * dpr);
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                positionGoalInputs();
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // =========================================================
+            // 2. PROCEDURAL METALLIC COIN AUDIO (WEB AUDIO API)
+            // =========================================================
+            const sound = {
+                ctx: null,
+                muted: false,
+                init() {
+                    if (!this.ctx) {
+                        const AC = window.AudioContext || window.webkitAudioContext;
+                        if (AC) this.ctx = new AC();
+                    }
+                    if (this.ctx && this.ctx.state === 'suspended') {
+                        this.ctx.resume().catch(() => {});
+                    }
+                },
+                toggle() {
+                    this.muted = !this.muted;
+                },
+                ring(freq, dur, vol = 0.12, delay = 0, type = 'sine') {
+                    if (this.muted || !this.ctx) return;
+                    try {
+                        const t0 = this.ctx.currentTime + delay;
+                        const osc = this.ctx.createOscillator();
+                        const gain = this.ctx.createGain();
+                        osc.type = type;
+                        osc.frequency.setValueAtTime(freq, t0);
+                        gain.gain.setValueAtTime(vol, t0);
+                        gain.gain.exponentialRampToValueAtTime(0.0008, t0 + dur);
+                        osc.connect(gain);
+                        gain.connect(this.ctx.destination);
+                        osc.start(t0);
+                        osc.stop(t0 + dur + 0.01);
+                    } catch (e) {}
+                },
+                flip(metalPitch = 1.0) {
+                    const f1 = 2350 * metalPitch;
+                    const f2 = 3520 * metalPitch;
+                    this.ring(f1, 0.42, 0.11, 0, 'sine');
+                    this.ring(f2, 0.34, 0.07, 0.012, 'triangle');
+                    this.ring(f1 * 1.98, 0.22, 0.04, 0.02, 'sine');
+                },
+                land() {
+                    this.ring(320, 0.07, 0.12, 0, 'triangle');
+                    this.ring(1480, 0.14, 0.06, 0.01, 'sine');
+                    this.ring(659.25, 0.12, 0.08, 0.05, 'triangle');
+                    this.ring(987.77, 0.20, 0.09, 0.11, 'triangle');
+                },
+                unlock() {
+                    const notes = [523.25, 659.25, 783.99, 1046.5, 1318.5];
+                    notes.forEach((n, i) => this.ring(n, 0.24, 0.11, i * 0.065, 'triangle'));
+                },
+                click() {
+                    this.ring(780, 0.045, 0.06, 0, 'sine');
+                }
+            };
+
+            // =========================================================
+            // 3. COIN DENOMINATIONS & BALANCED PROGRESSION CONFIG
+            // =========================================================
+            const STORAGE_KEY = 'coin_flip_progression_v1';
+
+            const COINS = [
+                {
+                    id: '1k',
+                    num: '1',
+                    unit: 'КОПЕЙКА',
+                    short: '1 коп.',
+                    reqToNext: 5,
+                    radiusScale: 0.78,
+                    pitch: 1.24,
+                    metal: 'silver',
+                    rimDark: '#64748B',
+                    rimMid: '#CBD5E1',
+                    rimLight: '#F8FAFC',
+                    faceA: '#E2E8F0',
+                    faceB: '#94A3B8',
+                    engraveDark: '#334155',
+                    engraveLight: '#FFFFFF',
+                    accent: '#94A3B8',
+                    reedCount: 72,
+                    venzelStyle: 'scroll_classic',
+                    bgTop: '#1E293B',
+                    bgMid: '#0F172A',
+                    bgBot: '#060911',
+                    auraColor: 'rgba(203, 213, 225, 0.22)',
+                    themeMotif: 'steel_grid'
+                },
+                {
+                    id: '5k',
+                    num: '5',
+                    unit: 'КОПЕЕК',
+                    short: '5 коп.',
+                    reqToNext: 12,
+                    radiusScale: 0.84,
+                    pitch: 1.18,
+                    metal: 'silver',
+                    rimDark: '#475569',
+                    rimMid: '#CBD5E1',
+                    rimLight: '#FFFFFF',
+                    faceA: '#E5E7EB',
+                    faceB: '#9CA3AF',
+                    engraveDark: '#1F2937',
+                    engraveLight: '#FFFFFF',
+                    accent: '#CBD5E1',
+                    reedCount: 84,
+                    venzelStyle: 'laurel_duo',
+                    bgTop: '#16324A',
+                    bgMid: '#0C1E30',
+                    bgBot: '#050C14',
+                    auraColor: 'rgba(56, 189, 248, 0.22)',
+                    themeMotif: 'frost_stars'
+                },
+                {
+                    id: '10k',
+                    num: '10',
+                    unit: 'КОПЕЕК',
+                    short: '10 коп.',
+                    reqToNext: 25,
+                    radiusScale: 0.83,
+                    pitch: 1.15,
+                    metal: 'brass',
+                    rimDark: '#78350F',
+                    rimMid: '#D97706',
+                    rimLight: '#FDE68A',
+                    faceA: '#FBBF24',
+                    faceB: '#B45309',
+                    engraveDark: '#451A03',
+                    engraveLight: '#FEF3C7',
+                    accent: '#F59E0B',
+                    reedCount: 90,
+                    venzelStyle: 'scroll_classic',
+                    bgTop: '#3B230B',
+                    bgMid: '#211306',
+                    bgBot: '#0D0702',
+                    auraColor: 'rgba(245, 158, 11, 0.25)',
+                    themeMotif: 'sun_rays'
+                },
+                {
+                    id: '50k',
+                    num: '50',
+                    unit: 'КОПЕЕК',
+                    short: '50 коп.',
+                    reqToNext: 45,
+                    radiusScale: 0.90,
+                    pitch: 1.08,
+                    metal: 'brass',
+                    rimDark: '#713F12',
+                    rimMid: '#EAB308',
+                    rimLight: '#FEF08A',
+                    faceA: '#FACC15',
+                    faceB: '#A16207',
+                    engraveDark: '#422006',
+                    engraveLight: '#FEF9C3',
+                    accent: '#EAB308',
+                    reedCount: 98,
+                    venzelStyle: 'imperial_wreath',
+                    bgTop: '#451A03',
+                    bgMid: '#260E02',
+                    bgBot: '#0F0501',
+                    auraColor: 'rgba(250, 204, 21, 0.28)',
+                    themeMotif: 'gold_embers'
+                },
+                {
+                    id: '1r',
+                    num: '1',
+                    unit: 'РУБЛЬ',
+                    short: '1 руб.',
+                    reqToNext: 75,
+                    radiusScale: 0.93,
+                    pitch: 1.0,
+                    metal: 'nickel',
+                    rimDark: '#334155',
+                    rimMid: '#94A3B8',
+                    rimLight: '#F1F5F9',
+                    faceA: '#E2E8F0',
+                    faceB: '#64748B',
+                    engraveDark: '#1E293B',
+                    engraveLight: '#FFFFFF',
+                    accent: '#38BDF8',
+                    reedCount: 110,
+                    venzelStyle: 'arabesque_grand',
+                    bgTop: '#0C3649',
+                    bgMid: '#071E2B',
+                    bgBot: '#030D14',
+                    auraColor: 'rgba(14, 165, 233, 0.26)',
+                    themeMotif: 'sapphire_rings'
+                },
+                {
+                    id: '2r',
+                    num: '2',
+                    unit: 'РУБЛЯ',
+                    short: '2 руб.',
+                    reqToNext: 120,
+                    radiusScale: 0.98,
+                    pitch: 0.94,
+                    metal: 'nickel',
+                    rimDark: '#1E293B',
+                    rimMid: '#CBD5E1',
+                    rimLight: '#FFFFFF',
+                    faceA: '#F1F5F9',
+                    faceB: '#64748B',
+                    engraveDark: '#0F172A',
+                    engraveLight: '#FFFFFF',
+                    accent: '#60A5FA',
+                    reedCount: 118,
+                    venzelStyle: 'laurel_duo',
+                    bgTop: '#09382E',
+                    bgMid: '#051F1A',
+                    bgBot: '#020E0B',
+                    auraColor: 'rgba(16, 185, 129, 0.26)',
+                    themeMotif: 'emerald_chevrons'
+                },
+                {
+                    id: '5r',
+                    num: '5',
+                    unit: 'РУБЛЕЙ',
+                    short: '5 руб.',
+                    reqToNext: 180,
+                    radiusScale: 1.04,
+                    pitch: 0.88,
+                    metal: 'platinum',
+                    rimDark: '#1E293B',
+                    rimMid: '#E2E8F0',
+                    rimLight: '#FFFFFF',
+                    faceA: '#F8FAFC',
+                    faceB: '#94A3B8',
+                    engraveDark: '#0F172A',
+                    engraveLight: '#FFFFFF',
+                    accent: '#A78BFA',
+                    reedCount: 128,
+                    venzelStyle: 'arabesque_grand',
+                    bgTop: '#2E144D',
+                    bgMid: '#190B2B',
+                    bgBot: '#090412',
+                    auraColor: 'rgba(168, 85, 247, 0.30)',
+                    themeMotif: 'royal_filigree'
+                },
+                {
+                    id: '10r',
+                    num: '10',
+                    unit: 'РУБЛЕЙ',
+                    short: '10 руб.',
+                    reqToNext: 0,
+                    radiusScale: 1.10,
+                    pitch: 0.82,
+                    metal: 'bimetal',
+                    rimDark: '#78350F',
+                    rimMid: '#F59E0B',
+                    rimLight: '#FEF08A',
+                    faceA: '#F8FAFC',
+                    faceB: '#94A3B8',
+                    engraveDark: '#1E293B',
+                    engraveLight: '#FFFFFF',
+                    accent: '#FBBF24',
+                    reedCount: 140,
+                    venzelStyle: 'imperial_wreath',
+                    bgTop: '#4C0D1D',
+                    bgMid: '#260710',
+                    bgBot: '#0D0205',
+                    auraColor: 'rgba(251, 191, 36, 0.35)',
+                    themeMotif: 'imperial_vault'
+                }
+            ];
+
+
+            // =========================================================
+            // 4. SAFE PERSISTENCE (localStorage + window.name)
+            // =========================================================
+            const memStore = {};
+            function safeRead(key) {
+                try {
+                    const v = localStorage.getItem(key);
+                    if (v !== null) return v;
+                } catch (e) {}
+                try {
+                    if (window.name && window.name.startsWith('CF_SAVE:')) {
+                        const obj = JSON.parse(window.name.slice(8));
+                        if (obj && key in obj) return obj[key];
+                    }
+                } catch (e) {}
+                return key in memStore ? memStore[key] : null;
+            }
+            function safeWrite(key, val) {
+                memStore[key] = val;
+                try { localStorage.setItem(key, val); } catch (e) {}
+                try {
+                    let obj = {};
+                    if (window.name && window.name.startsWith('CF_SAVE:')) {
+                        obj = JSON.parse(window.name.slice(8)) || {};
+                    }
+                    obj[key] = val;
+                    window.name = 'CF_SAVE:' + JSON.stringify(obj);
+                } catch (e) {}
+            }
+
+            function loadSave() {
+                try {
+                    const raw = safeRead(STORAGE_KEY);
+                    if (raw) {
+                        const d = JSON.parse(raw);
+                        if (d && typeof d.unlockedMax === 'number') {
+                            return {
+                                unlockedMax: Math.max(0, Math.min(COINS.length - 1, d.unlockedMax)),
+                                currentIdx: Math.max(0, Math.min(COINS.length - 1, d.currentIdx ?? d.unlockedMax)),
+                                progress: Math.max(0, Number(d.progress) || 0),
+                                totalFlips: Math.max(0, Number(d.totalFlips) || 0),
+                                headsCount: Math.max(0, Number(d.headsCount) || 0),
+                                tailsCount: Math.max(0, Number(d.tailsCount) || 0),
+                                headsGoal: typeof d.headsGoal === 'string' ? d.headsGoal : '',
+                                tailsGoal: typeof d.tailsGoal === 'string' ? d.tailsGoal : ''
+                            };
+                        }
+                    }
+                } catch (e) {}
+                return {
+                    unlockedMax: 0,
+                    currentIdx: 0,
+                    progress: 0,
+                    totalFlips: 0,
+                    headsCount: 0,
+                    tailsCount: 0,
+                    headsGoal: '',
+                    tailsGoal: ''
+                };
+            }
+
+            const save = loadSave();
+            headsInput.value = save.headsGoal || '';
+            tailsInput.value = save.tailsGoal || '';
+
+            function persist() {
+                safeWrite(STORAGE_KEY, JSON.stringify(save));
+            }
+
+            headsInput.addEventListener('input', () => {
+                save.headsGoal = headsInput.value;
+                persist();
+            });
+            tailsInput.addEventListener('input', () => {
+                save.tailsGoal = tailsInput.value;
+                persist();
+            });
+
+            // =========================================================
+            // 5. SIMULATION & ANIMATION STATE
+            // =========================================================
+            const state = {
+                flipping: false,
+                flipTime: 0,
+                flipDuration: 1.05,
+                startAngle: 0,
+                targetAngle: 0,
+                currentAngle: 0,
+                resultSide: 'HEADS',
+                jumpHeight: 0,
+                tiltWobble: 0,
+                shinePhase: 0,
+                lastOutcomeText: '',
+                lastOutcomeSub: '',
+                lastOutcomeColor: '#FACC15',
+                winModal: null,
+                unlockBannerTimer: 0,
+                unlockBannerTitle: '',
+                particles: [],
+                floaters: [],
+                hitboxes: [],
+                clock: 0
+            };
+
+            function getFlipRewardMultiplier() {
+                const diff = save.unlockedMax - save.currentIdx;
+                if (diff <= 0) return 1.0;
+                if (diff === 1) return 0.5;
+                return 0.25;
+            }
+
+            function spawnSparkles(x, y, color, count = 18) {
+                for (let i = 0; i < count; i++) {
+                    const a = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.35;
+                    const spd = 70 + Math.random() * 140;
+                    state.particles.push({
+                        x,
+                        y,
+                        vx: Math.cos(a) * spd,
+                        vy: Math.sin(a) * spd - 35,
+                        r: 2.2 + Math.random() * 2.5,
+                        color,
+                        life: 0.55 + Math.random() * 0.3,
+                        maxLife: 0.85
+                    });
+                }
+            }
+
+            function spawnFloater(x, y, text, color = '#FACC15', scale = 1) {
+                state.floaters.push({
+                    x,
+                    y,
+                    text,
+                    color,
+                    scale,
+                    vy: -54,
+                    life: 1.15
+                });
+            }
+
+            function triggerFlip() {
+                if (state.flipping) return;
+                state.winModal = null;
+                sound.init();
+
+                const coin = COINS[save.currentIdx];
+                sound.flip(coin.pitch);
+
+                const isHeads = Math.random() < 0.5;
+                state.resultSide = isHeads ? 'HEADS' : 'TAILS';
+
+                const baseStart = state.currentAngle % (Math.PI * 2);
+                const fullSpins = 5 + Math.floor(Math.random() * 2);
+                const endMod = isHeads ? 0 : Math.PI;
+
+                state.startAngle = baseStart;
+                state.targetAngle = fullSpins * Math.PI * 2 + endMod;
+                state.flipTime = 0;
+                state.flipDuration = 1.02 + Math.random() * 0.14;
+                state.flipping = true;
+            }
+
+            function onFlipComplete() {
+                state.flipping = false;
+                state.currentAngle = state.targetAngle % (Math.PI * 2);
+                state.jumpHeight = 0;
+                state.tiltWobble = 0.28;
+                state.shinePhase = 1.0;
+
+                const isHeads = state.resultSide === 'HEADS';
+                save.totalFlips += 1;
+                if (isHeads) save.headsCount += 1;
+                else save.tailsCount += 1;
+
+                sound.land();
+
+                const sideLabel = isHeads ? 'ОРЁЛ' : 'РЕШКА';
+                const customGoal = (isHeads ? save.headsGoal : save.tailsGoal).trim();
+                const otherGoal = (isHeads ? save.tailsGoal : save.headsGoal).trim();
+                const hasAnyGoal = save.headsGoal.trim().length > 0 || save.tailsGoal.trim().length > 0;
+
+                const outcomeHeader = customGoal
+                    ? `${sideLabel}: «${customGoal.toUpperCase()}»`
+                    : `ВЫПАЛ ${sideLabel}`;
+                const cy = getCoinCenterY();
+
+                state.lastOutcomeText = outcomeHeader;
+                state.lastOutcomeColor = isHeads ? '#FACC15' : '#38BDF8';
+
+                if (hasAnyGoal) {
+                    state.winModal = {
+                        sideLabel,
+                        winnerText: customGoal || `Выпал ${sideLabel.toLowerCase()} (без текста)`,
+                        loserLabel: isHeads ? 'Решка' : 'Орёл',
+                        loserText: otherGoal,
+                        color: isHeads ? '#FACC15' : '#38BDF8',
+                        scale: 0.72
+                    };
+                }
+
+                if (save.unlockedMax < COINS.length - 1) {
+                    const activeCoin = COINS[save.unlockedMax];
+                    const mult = getFlipRewardMultiplier();
+                    const gain = Number(mult.toFixed(2));
+                    save.progress = Number((save.progress + gain).toFixed(2));
+
+                    const gainStr = gain === 1 ? '+1' : `+${gain}`;
+                    state.lastOutcomeSub = `Прогресс: ${gainStr} бросок`;
+                    spawnFloater(W / 2, cy - 110, outcomeHeader, state.lastOutcomeColor, 1.05);
+                    spawnFloater(W / 2, cy - 82, `${gainStr} к открытию`, '#94A3B8', 0.9);
+                    spawnSparkles(W / 2, cy, state.lastOutcomeColor, 14);
+
+                    if (save.progress >= activeCoin.reqToNext) {
+                        save.progress = Number((save.progress - activeCoin.reqToNext).toFixed(2));
+                        save.unlockedMax += 1;
+                        save.currentIdx = save.unlockedMax;
+                        const unlockedCoin = COINS[save.unlockedMax];
+                        sound.unlock();
+                        state.unlockBannerTimer = 3.2;
+                        state.unlockBannerTitle = `ОТКРЫТА МОНЕТА: ${unlockedCoin.num} ${unlockedCoin.unit}!`;
+                        spawnSparkles(W / 2, cy, '#FACC15', 34);
+                    }
+                } else {
+                    state.lastOutcomeSub = 'Максимальный номинал открыт';
+                    spawnFloater(W / 2, cy - 102, outcomeHeader, state.lastOutcomeColor, 1.05);
+                    spawnSparkles(W / 2, cy, '#FACC15', 14);
+                }
+
+                persist();
+            }
+
+            // =========================================================
+            // 6. UPDATE LOOP
+            // =========================================================
+            function update(dt) {
+                state.clock += dt;
+
+                if (state.winModal && state.winModal.scale < 1) {
+                    state.winModal.scale = Math.min(1, state.winModal.scale + dt * 3.8);
+                }
+
+                if (state.unlockBannerTimer > 0) {
+                    state.unlockBannerTimer = Math.max(0, state.unlockBannerTimer - dt);
+                }
+                if (state.tiltWobble > 0) {
+                    state.tiltWobble = Math.max(0, state.tiltWobble - dt * 1.4);
+                }
+                if (state.shinePhase > 0) {
+                    state.shinePhase = Math.max(0, state.shinePhase - dt * 1.6);
+                }
+
+                if (state.flipping) {
+                    state.flipTime += dt;
+                    const t = Math.min(1, state.flipTime / state.flipDuration);
+                    const ease = 1 - Math.pow(1 - t, 3);
+                    state.currentAngle = state.startAngle + (state.targetAngle - state.startAngle) * ease;
+                    state.jumpHeight = Math.sin(t * Math.PI) * Math.min(145, H * 0.21);
+
+                    if (t >= 1) {
+                        onFlipComplete();
+                    }
+                }
+
+                for (let i = state.particles.length - 1; i >= 0; i--) {
+                    const p = state.particles[i];
+                    p.vy += 320 * dt;
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.life -= dt;
+                    if (p.life <= 0) state.particles.splice(i, 1);
+                }
+
+                for (let i = state.floaters.length - 1; i >= 0; i--) {
+                    const f = state.floaters[i];
+                    f.y += f.vy * dt;
+                    f.vy *= 0.94;
+                    f.life -= dt;
+                    if (f.life <= 0) state.floaters.splice(i, 1);
+                }
+            }
+
+            // =========================================================
+            // 7. HIGH-DETAIL NUMISMATIC COIN & VENZEL RENDERER
+            // =========================================================
+            function getCoinCenterY() {
+                return Math.round(H * 0.48) + 22;
+            }
+
+            function drawCoin3D(coin, cx, cy, angle, jumpY, wobble) {
+                const baseR = Math.max(76, Math.min(118, Math.min(W * 0.28, H * 0.165)));
+                const R = baseR * coin.radiusScale;
+
+                const cosA = Math.cos(angle);
+                const sinA = Math.sin(angle);
+                const absCos = Math.max(0.035, Math.abs(cosA));
+                const isHeadsFace = cosA >= 0;
+
+                const liftScale = 1 + (jumpY / 150) * 0.24;
+                const drawY = cy - jumpY;
+
+                // Soft Ground Contact Shadow
+                const shadowScale = Math.max(0.35, 1 - jumpY / 210);
+                ctx.save();
+                ctx.fillStyle = `rgba(0, 0, 0, ${0.42 * shadowScale})`;
+                ctx.beginPath();
+                ctx.ellipse(cx, cy + R * 1.15, R * 0.92 * shadowScale, R * 0.22 * shadowScale, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+
+                ctx.save();
+                ctx.translate(cx, drawY);
+                ctx.scale(liftScale, liftScale);
+                if (wobble > 0) {
+                    ctx.rotate(Math.sin(state.clock * 32) * wobble * 0.08);
+                }
+
+                // 3D Reeded Coin Edge (Гурт монеты)
+                const edgeThickness = Math.max(7, R * 0.13) * Math.abs(sinA);
+                if (edgeThickness > 0.6) {
+                    const edgeOffset = (sinA >= 0 ? -1 : 1) * edgeThickness;
+                    const edgeGrad = ctx.createLinearGradient(0, -R, 0, R);
+                    edgeGrad.addColorStop(0, coin.rimDark);
+                    edgeGrad.addColorStop(0.3, coin.rimLight);
+                    edgeGrad.addColorStop(0.5, coin.rimMid);
+                    edgeGrad.addColorStop(0.75, coin.rimLight);
+                    edgeGrad.addColorStop(1, coin.rimDark);
+
+                    ctx.fillStyle = edgeGrad;
+                    ctx.beginPath();
+                    ctx.ellipse(edgeOffset, 0, R * absCos, R, 0, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillRect(
+                        Math.min(0, edgeOffset) - R * absCos * 0.05,
+                        -R,
+                        Math.abs(edgeOffset) + R * absCos * 0.1,
+                        R * 2
+                    );
+
+                    ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+                    ctx.lineWidth = 1.2;
+                    for (let ry = -R + 5; ry < R - 4; ry += 4) {
+                        ctx.beginPath();
+                        ctx.moveTo(Math.min(0, edgeOffset), ry);
+                        ctx.lineTo(Math.max(0, edgeOffset), ry);
+                        ctx.stroke();
+                    }
+                }
+
+                // Scale horizontally by cos(angle) for true 3D coin flip foreshortening
+                ctx.scale(absCos, 1);
+
+                // Outer Metallic Rim with Multi-Stop Specular Bevel (Кант монеты)
+                const rimGrad = ctx.createLinearGradient(-R, -R, R, R);
+                rimGrad.addColorStop(0, coin.rimLight);
+                rimGrad.addColorStop(0.25, coin.rimMid);
+                rimGrad.addColorStop(0.5, coin.rimLight);
+                rimGrad.addColorStop(0.75, coin.rimDark);
+                rimGrad.addColorStop(1, coin.rimMid);
+
+                ctx.beginPath();
+                ctx.arc(0, 0, R, 0, Math.PI * 2);
+                ctx.fillStyle = rimGrad;
+                ctx.fill();
+                ctx.lineWidth = 2.8;
+                ctx.strokeStyle = '#070A12';
+                ctx.stroke();
+
+                // Inner Rim Step Shadow (Ступенька канта для глубины чеканки)
+                const innerR = R * 0.875;
+                ctx.beginPath();
+                ctx.arc(0, 0, innerR + 1.5, 0, Math.PI * 2);
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.42)';
+                ctx.lineWidth = 2.2;
+                ctx.stroke();
+
+                // Inner Field Disc with Rich Directional Lighting (Монетное поле)
+                const fieldGrad = ctx.createRadialGradient(-R * 0.32, -R * 0.32, R * 0.05, 0, 0, innerR);
+                fieldGrad.addColorStop(0, coin.rimLight);
+                fieldGrad.addColorStop(0.32, coin.faceA);
+                fieldGrad.addColorStop(0.78, coin.faceB);
+                fieldGrad.addColorStop(1, coin.rimDark);
+
+                ctx.beginPath();
+                ctx.arc(0, 0, innerR, 0, Math.PI * 2);
+                ctx.fillStyle = fieldGrad;
+                ctx.fill();
+
+                // Subtle Concentric Lathe-Turned Metal Grain (Микро-текстура чеканки)
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(0, 0, innerR, 0, Math.PI * 2);
+                ctx.clip();
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
+                ctx.lineWidth = 1;
+                for (let gr = innerR * 0.25; gr < innerR; gr += 5.5) {
+                    ctx.beginPath();
+                    ctx.arc(0, 0, gr, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+                ctx.restore();
+
+                // Bimetal Center Core for 10 Rubles with Brass-to-Nickel Seam
+                if (coin.metal === 'bimetal') {
+                    const coreR = R * 0.635;
+                    const coreGrad = ctx.createRadialGradient(-coreR * 0.28, -coreR * 0.28, 4, 0, 0, coreR);
+                    coreGrad.addColorStop(0, '#FFFFFF');
+                    coreGrad.addColorStop(0.45, '#E2E8F0');
+                    coreGrad.addColorStop(0.85, '#94A3B8');
+                    coreGrad.addColorStop(1, '#475569');
+
+                    ctx.beginPath();
+                    ctx.arc(0, 0, coreR, 0, Math.PI * 2);
+                    ctx.fillStyle = coreGrad;
+                    ctx.fill();
+
+                    ctx.lineWidth = 2.4;
+                    ctx.strokeStyle = '#78350F';
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.arc(0, 0, coreR - 2, 0, Math.PI * 2);
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+                    ctx.lineWidth = 1.2;
+                    ctx.stroke();
+                }
+
+                // Fine Beaded Inner Ring with Highlight Dots (Бусовый ободок)
+                const beadR = R * 0.825;
+                const beadCount = 60;
+                for (let i = 0; i < beadCount; i++) {
+                    const ba = (Math.PI * 2 * i) / beadCount;
+                    const bx = Math.cos(ba) * beadR;
+                    const by = Math.sin(ba) * beadR;
+                    ctx.fillStyle = coin.engraveLight;
+                    ctx.beginPath();
+                    ctx.arc(bx + 0.6, by + 0.6, R * 0.011, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = coin.engraveDark;
+                    ctx.beginPath();
+                    ctx.arc(bx, by, R * 0.011, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Draw Either HEADS (Орёл) or TAILS (Решка с вензелями)
+                if (isHeadsFace) {
+                    drawHeadsEngraving(coin, R);
+                } else {
+                    drawTailsVenzelEngraving(coin, R);
+                }
+
+                // Specular Metallic Glint Sweep across coin surface
+                const glintT = state.shinePhase > 0
+                    ? (1 - state.shinePhase)
+                    : ((state.clock * 0.28) % 1);
+                if (glintT < 0.45) {
+                    const gx = -R * 1.4 + (glintT / 0.45) * R * 2.8;
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(0, 0, R * 0.96, 0, Math.PI * 2);
+                    ctx.clip();
+
+                    const sheen = ctx.createLinearGradient(gx - R * 0.25, -R, gx + R * 0.25, R);
+                    sheen.addColorStop(0, 'rgba(255,255,255,0)');
+                    sheen.addColorStop(0.5, 'rgba(255,255,255,0.34)');
+                    sheen.addColorStop(1, 'rgba(255,255,255,0)');
+                    ctx.fillStyle = sheen;
+                    ctx.fillRect(-R, -R, R * 2, R * 2);
+                    ctx.restore();
+                }
+
+                ctx.restore();
+            }
+
+            // =========================================================
+            // 7A. OBVERSE ENGRAVING: DOUBLE-HEADED EAGLE (ОРЁЛ)
+            // =========================================================
+            function drawHeadsEngraving(coin, R) {
+                const dark = coin.engraveDark;
+                const light = coin.engraveLight;
+
+                ctx.save();
+
+                // Circular Legend Arc ("БАНК РОССИИ" / "ОРЁЛ")
+                drawCircularText('БАНК РОССИИ', R * 0.69, -Math.PI * 0.78, -Math.PI * 0.22, R * 0.082, dark);
+                drawCircularText('• ОРЁЛ •', R * 0.69, Math.PI * 0.72, Math.PI * 0.28, R * 0.082, dark, true);
+
+                // Embossed highlight offset + dark core engraving
+                [1.4, 0].forEach(pass => {
+                    ctx.save();
+                    ctx.translate(pass * 0.9, pass * 0.9);
+                    const stroke = pass > 0 ? light : dark;
+                    ctx.strokeStyle = stroke;
+                    ctx.fillStyle = stroke;
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+
+                    // Left & Right Spread Wings with layered feathers
+                    [-1, 1].forEach(side => {
+                        ctx.save();
+                        ctx.scale(side, 1);
+
+                        ctx.lineWidth = R * 0.024;
+                        ctx.beginPath();
+                        ctx.moveTo(R * 0.09, -R * 0.08);
+                        ctx.bezierCurveTo(R * 0.26, -R * 0.34, R * 0.52, -R * 0.28, R * 0.56, -R * 0.06);
+                        ctx.bezierCurveTo(R * 0.54, R * 0.14, R * 0.36, R * 0.28, R * 0.14, R * 0.20);
+                        ctx.stroke();
+
+                        for (let f = 0; f < 5; f++) {
+                            const fy = -R * 0.14 + f * R * 0.075;
+                            const fx = R * (0.50 - f * 0.045);
+                            ctx.lineWidth = R * 0.018;
+                            ctx.beginPath();
+                            ctx.moveTo(R * 0.16, fy * 0.65);
+                            ctx.quadraticCurveTo(fx * 0.75, fy - R * 0.03, fx, fy + R * 0.02);
+                            ctx.stroke();
+                        }
+
+                        // Eagle Neck & Crowned Head
+                        ctx.lineWidth = R * 0.026;
+                        ctx.beginPath();
+                        ctx.moveTo(R * 0.06, -R * 0.12);
+                        ctx.quadraticCurveTo(R * 0.15, -R * 0.25, R * 0.13, -R * 0.34);
+                        ctx.stroke();
+
+                        ctx.beginPath();
+                        ctx.arc(R * 0.14, -R * 0.35, R * 0.034, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        // Beak
+                        ctx.beginPath();
+                        ctx.moveTo(R * 0.17, -R * 0.36);
+                        ctx.lineTo(R * 0.23, -R * 0.34);
+                        ctx.lineTo(R * 0.17, -R * 0.32);
+                        ctx.closePath();
+                        ctx.fill();
+
+                        // Small Crown above head
+                        ctx.beginPath();
+                        ctx.arc(R * 0.13, -R * 0.42, R * 0.022, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        // Talon holding Scepter / Orb
+                        ctx.lineWidth = R * 0.02;
+                        ctx.beginPath();
+                        ctx.moveTo(R * 0.08, R * 0.18);
+                        ctx.lineTo(R * 0.20, R * 0.33);
+                        ctx.stroke();
+
+                        ctx.restore();
+                    });
+
+                    // Central Imperial Crown
+                    ctx.beginPath();
+                    ctx.arc(0, -R * 0.48, R * 0.038, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.lineWidth = R * 0.018;
+                    ctx.beginPath();
+                    ctx.moveTo(0, -R * 0.55);
+                    ctx.lineTo(0, -R * 0.49);
+                    ctx.moveTo(-R * 0.025, -R * 0.53);
+                    ctx.lineTo(R * 0.025, -R * 0.53);
+                    ctx.stroke();
+
+                    // Central Shield Breastplate
+                    ctx.beginPath();
+                    ctx.moveTo(-R * 0.11, -R * 0.10);
+                    ctx.lineTo(R * 0.11, -R * 0.10);
+                    ctx.lineTo(R * 0.09, R * 0.11);
+                    ctx.lineTo(0, R * 0.19);
+                    ctx.lineTo(-R * 0.09, R * 0.11);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Tail Feathers Fan
+                    ctx.lineWidth = R * 0.02;
+                    for (let t = -2; t <= 2; t++) {
+                        ctx.beginPath();
+                        ctx.moveTo(t * R * 0.02, R * 0.21);
+                        ctx.lineTo(t * R * 0.065, R * 0.42);
+                        ctx.stroke();
+                    }
+
+                    ctx.restore();
+                });
+
+                ctx.restore();
+            }
+
+            // =========================================================
+            // 7B. REVERSE ENGRAVING: DENOMINATION & BAROQUE VENZELS (РЕШКА)
+            // =========================================================
+            function drawTailsVenzelEngraving(coin, R) {
+                const dark = coin.engraveDark;
+                const light = coin.engraveLight;
+
+                ctx.save();
+
+                // 1. Ornate Symmetrical Venzel Scrollwork (Вензеля по краям и сверху/снизу)
+                [1.3, 0].forEach(pass => {
+                    ctx.save();
+                    ctx.translate(pass * 0.9, pass * 0.9);
+                    const col = pass > 0 ? light : dark;
+                    ctx.strokeStyle = col;
+                    ctx.fillStyle = col;
+                    ctx.lineCap = 'round';
+
+                    // Top Baroque Crown-Venzel Filigree
+                    drawTopVenzel(R, col);
+
+                    // Bottom Venzel Ribbon & Rosette
+                    drawBottomVenzel(R, col);
+
+                    // Left & Right Floral / Laurel Venzel Branches
+                    [-1, 1].forEach(side => {
+                        ctx.save();
+                        ctx.scale(side, 1);
+                        drawSideVenzelBranch(R, col, coin.venzelStyle);
+                        ctx.restore();
+                    });
+
+                    ctx.restore();
+                });
+
+                // 2. Large Embossed Denomination Numeral ("1", "5", "10", "50", "2")
+                const numSize = coin.num.length > 1 ? Math.round(R * 0.56) : Math.round(R * 0.66);
+                ctx.font = `900 ${numSize}px Georgia, 'Times New Roman', serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                // Highlight bevel + deep stamped shadow + metallic face
+                ctx.fillStyle = light;
+                ctx.fillText(coin.num, 1.8, -R * 0.07 + 1.8);
+
+                ctx.fillStyle = dark;
+                ctx.fillText(coin.num, -1.2, -R * 0.07 - 1.2);
+
+                const numGrad = ctx.createLinearGradient(0, -R * 0.35, 0, R * 0.25);
+                numGrad.addColorStop(0, light);
+                numGrad.addColorStop(0.5, coin.faceA);
+                numGrad.addColorStop(1, dark);
+                ctx.fillStyle = numGrad;
+                ctx.fillText(coin.num, 0, -R * 0.07);
+
+                ctx.lineWidth = 1.4;
+                ctx.strokeStyle = dark;
+                ctx.strokeText(coin.num, 0, -R * 0.07);
+
+                // 3. Denomination Unit ("КОПЕЙКА" / "РУБЛЕЙ")
+                const unitSize = Math.round(R * 0.145);
+                ctx.font = `800 ${unitSize}px Georgia, 'Times New Roman', serif`;
+                ctx.fillStyle = light;
+                ctx.fillText(coin.unit, 1, R * 0.30 + 1);
+                ctx.fillStyle = dark;
+                ctx.fillText(coin.unit, 0, R * 0.30);
+
+                // 4. Bottom Mint Year / "РЕШКА" Stamp
+                ctx.font = `700 ${Math.round(R * 0.088)}px Georgia, serif`;
+                ctx.fillStyle = dark;
+                ctx.fillText('• РЕШКА •', 0, R * 0.66);
+
+                ctx.restore();
+            }
+
+            function drawTopVenzel(R, col) {
+                ctx.strokeStyle = col;
+                ctx.fillStyle = col;
+                ctx.lineWidth = R * 0.018;
+
+                // Central diamond/fleur-de-lis crest
+                ctx.beginPath();
+                ctx.moveTo(0, -R * 0.72);
+                ctx.lineTo(R * 0.04, -R * 0.64);
+                ctx.lineTo(0, -R * 0.56);
+                ctx.lineTo(-R * 0.04, -R * 0.64);
+                ctx.closePath();
+                ctx.fill();
+
+                // S-scrolls fanning left & right
+                [-1, 1].forEach(s => {
+                    ctx.beginPath();
+                    ctx.moveTo(s * R * 0.04, -R * 0.63);
+                    ctx.bezierCurveTo(s * R * 0.16, -R * 0.73, s * R * 0.28, -R * 0.64, s * R * 0.22, -R * 0.56);
+                    ctx.bezierCurveTo(s * R * 0.18, -R * 0.51, s * R * 0.12, -R * 0.55, s * R * 0.15, -R * 0.59);
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.arc(s * R * 0.30, -R * 0.55, R * 0.016, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            }
+
+            function drawBottomVenzel(R, col) {
+                ctx.strokeStyle = col;
+                ctx.fillStyle = col;
+                ctx.lineWidth = R * 0.018;
+
+                // Decorative divider line under unit text
+                ctx.beginPath();
+                ctx.moveTo(-R * 0.32, R * 0.43);
+                ctx.quadraticCurveTo(0, R * 0.49, R * 0.32, R * 0.43);
+                ctx.stroke();
+
+                // Center rosette knot
+                ctx.beginPath();
+                ctx.arc(0, R * 0.46, R * 0.026, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Curling tendrils
+                [-1, 1].forEach(s => {
+                    ctx.beginPath();
+                    ctx.moveTo(s * R * 0.04, R * 0.46);
+                    ctx.bezierCurveTo(s * R * 0.14, R * 0.56, s * R * 0.26, R * 0.52, s * R * 0.23, R * 0.45);
+                    ctx.stroke();
+                });
+            }
+
+            function drawSideVenzelBranch(R, col, style) {
+                ctx.strokeStyle = col;
+                ctx.fillStyle = col;
+                ctx.lineWidth = R * 0.02;
+
+                // Main curved stem hugging the coin border
+                ctx.beginPath();
+                ctx.moveTo(R * 0.26, R * 0.52);
+                ctx.bezierCurveTo(R * 0.68, R * 0.36, R * 0.72, -R * 0.28, R * 0.34, -R * 0.52);
+                ctx.stroke();
+
+                // Spiral filigree curls along the stem
+                const nodes = [
+                    { a: 0.55, r: 0.56, sz: 1.0 },
+                    { a: 0.18, r: 0.62, sz: 1.15 },
+                    { a: -0.20, r: 0.61, sz: 1.1 },
+                    { a: -0.56, r: 0.54, sz: 0.9 }
+                ];
+
+                nodes.forEach((n, idx) => {
+                    const bx = Math.cos(n.a) * R * n.r;
+                    const by = Math.sin(n.a) * R * n.r;
+
+                    // Outer leaf / scroll
+                    ctx.beginPath();
+                    ctx.ellipse(
+                        bx + R * 0.055 * n.sz,
+                        by - R * 0.02,
+                        R * 0.065 * n.sz,
+                        R * 0.026 * n.sz,
+                        n.a - 0.5,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+
+                    // Inner curl / berry
+                    if (style === 'arabesque_grand' || style === 'imperial_wreath' || idx % 2 === 0) {
+                        ctx.beginPath();
+                        ctx.arc(bx - R * 0.055, by + R * 0.015, R * 0.02 * n.sz, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                });
+
+                // Extra inner spiral scroll for higher denominations
+                if (style === 'arabesque_grand' || style === 'imperial_wreath') {
+                    ctx.lineWidth = R * 0.015;
+                    ctx.beginPath();
+                    ctx.moveTo(R * 0.54, -R * 0.05);
+                    ctx.bezierCurveTo(R * 0.44, -R * 0.14, R * 0.42, R * 0.04, R * 0.50, R * 0.04);
+                    ctx.stroke();
+                }
+            }
+
+            function drawCircularText(text, radius, startAngle, endAngle, fontSize, color, reverse = false) {
+                ctx.save();
+                ctx.font = `800 ${Math.round(fontSize)}px Georgia, serif`;
+                ctx.fillStyle = color;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                const chars = text.split('');
+                const step = chars.length > 1 ? (endAngle - startAngle) / (chars.length - 1) : 0;
+
+                chars.forEach((ch, i) => {
+                    const a = startAngle + i * step;
+                    ctx.save();
+                    ctx.translate(Math.cos(a) * radius, Math.sin(a) * radius);
+                    ctx.rotate(a + (reverse ? -Math.PI / 2 : Math.PI / 2));
+                    ctx.fillText(ch, 0, 0);
+                    ctx.restore();
+                });
+                ctx.restore();
+            }
+
+            // =========================================================
+            // 8. CLEAN MODERN UI & LAYOUT RENDERER
+            // =========================================================
+            function drawCoinThemedBackground(coin, cx, cy) {
+                const bg = ctx.createRadialGradient(cx, cy, 24, W / 2, H * 0.5, Math.max(W, H) * 0.82);
+                bg.addColorStop(0, coin.bgTop);
+                bg.addColorStop(0.52, coin.bgMid);
+                bg.addColorStop(1, coin.bgBot);
+                ctx.fillStyle = bg;
+                ctx.fillRect(0, 0, W, H);
+
+                const t = state.clock;
+                ctx.save();
+
+                if (coin.themeMotif === 'steel_grid') {
+                    // 1 коп: Строгий инженерный чертёж с вращающимися орбитами
+                    ctx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
+                    ctx.lineWidth = 1;
+                    const step = 38;
+                    for (let gx = (W / 2) % step; gx < W; gx += step) {
+                        ctx.beginPath();
+                        ctx.moveTo(gx, 0);
+                        ctx.lineTo(gx, H);
+                        ctx.stroke();
+                    }
+                    for (let gy = cy % step; gy < H; gy += step) {
+                        ctx.beginPath();
+                        ctx.moveTo(0, gy);
+                        ctx.lineTo(W, gy);
+                        ctx.stroke();
+                    }
+                    ctx.strokeStyle = 'rgba(203, 213, 225, 0.14)';
+                    ctx.setLineDash([8, 10]);
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 148, t * 0.15, t * 0.15 + Math.PI * 2);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                } else if (coin.themeMotif === 'frost_stars') {
+                    // 5 коп: Морозное серебро и мерцающие кристаллы
+                    for (let i = 0; i < 26; i++) {
+                        const px = ((i * 97 + Math.sin(t * 0.4 + i) * 18) % W + W) % W;
+                        const py = ((i * 131 + t * (10 + (i % 4) * 4)) % H);
+                        const alpha = 0.18 + 0.22 * Math.sin(t * 2.2 + i);
+                        ctx.fillStyle = `rgba(186, 230, 253, ${alpha})`;
+                        ctx.beginPath();
+                        ctx.arc(px, py, 1.5 + (i % 3) * 0.8, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                } else if (coin.themeMotif === 'sun_rays') {
+                    // 10 коп: Тёплые солнечные лучи латуни
+                    ctx.translate(cx, cy);
+                    ctx.rotate(t * 0.08);
+                    const rays = 16;
+                    for (let i = 0; i < rays; i++) {
+                        const a = (Math.PI * 2 * i) / rays;
+                        ctx.fillStyle = i % 2 === 0 ? 'rgba(245, 158, 11, 0.05)' : 'rgba(253, 230, 138, 0.02)';
+                        ctx.beginPath();
+                        ctx.moveTo(0, 0);
+                        ctx.arc(0, 0, Math.max(W, H), a, a + (Math.PI * 2) / rays);
+                        ctx.closePath();
+                        ctx.fill();
+                    }
+                } else if (coin.themeMotif === 'gold_embers') {
+                    // 50 коп: Восходящие золотые искры кузницы
+                    for (let i = 0; i < 28; i++) {
+                        const spread = Math.sin(i * 1.7 + t * 0.8) * 160;
+                        const px = cx + spread + ((i - 14) * 18);
+                        const py = H - ((t * (28 + (i % 5) * 9) + i * 47) % (H + 40));
+                        const alpha = 0.25 + 0.35 * Math.sin(t * 3 + i);
+                        ctx.fillStyle = `rgba(250, 204, 21, ${alpha})`;
+                        ctx.beginPath();
+                        ctx.arc(px, py, 1.8 + (i % 2), 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                } else if (coin.themeMotif === 'sapphire_rings') {
+                    // 1 руб: Сапфировые концентрические волны
+                    for (let r = 95; r <= 275; r += 45) {
+                        const pulse = Math.sin(t * 1.5 - r * 0.03) * 4;
+                        ctx.strokeStyle = 'rgba(56, 189, 248, 0.13)';
+                        ctx.lineWidth = 1.5;
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, r + pulse, 0, Math.PI * 2);
+                        ctx.stroke();
+                    }
+                } else if (coin.themeMotif === 'emerald_chevrons') {
+                    // 2 руб: Изумрудные геометрические ромбы
+                    ctx.strokeStyle = 'rgba(52, 211, 153, 0.11)';
+                    ctx.lineWidth = 1.5;
+                    for (let s = 120; s <= 260; s += 46) {
+                        ctx.save();
+                        ctx.translate(cx, cy);
+                        ctx.rotate(Math.PI / 4 + Math.sin(t * 0.4) * 0.05);
+                        ctx.strokeRect(-s / 2, -s / 2, s, s);
+                        ctx.restore();
+                    }
+                } else if (coin.themeMotif === 'royal_filigree') {
+                    // 5 руб: Аметистовая королевская мандала
+                    ctx.translate(cx, cy);
+                    ctx.rotate(-t * 0.07);
+                    ctx.strokeStyle = 'rgba(192, 132, 252, 0.15)';
+                    ctx.lineWidth = 1.5;
+                    const petals = 12;
+                    for (let i = 0; i < petals; i++) {
+                        ctx.rotate((Math.PI * 2) / petals);
+                        ctx.beginPath();
+                        ctx.ellipse(0, -145, 24, 52, 0, 0, Math.PI * 2);
+                        ctx.stroke();
+                    }
+                } else if (coin.themeMotif === 'imperial_vault') {
+                    // 10 руб: Императорский рубиново-золотой зал с короной лучей
+                    ctx.translate(cx, cy);
+                    ctx.rotate(t * 0.06);
+                    const rays = 24;
+                    for (let i = 0; i < rays; i++) {
+                        const a = (Math.PI * 2 * i) / rays;
+                        ctx.fillStyle = i % 2 === 0 ? 'rgba(251, 191, 36, 0.07)' : 'rgba(244, 63, 94, 0.03)';
+                        ctx.beginPath();
+                        ctx.moveTo(0, 0);
+                        ctx.arc(0, 0, Math.max(W, H), a, a + (Math.PI * 2) / rays);
+                        ctx.closePath();
+                        ctx.fill();
+                    }
+                    ctx.strokeStyle = 'rgba(251, 191, 36, 0.22)';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 158, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+
+                ctx.restore();
+
+                // Soft Metallic Aura behind Coin
+                const aura = ctx.createRadialGradient(cx, cy, 12, cx, cy, 195);
+                aura.addColorStop(0, coin.auraColor);
+                aura.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                ctx.fillStyle = aura;
+                ctx.fillRect(0, 70, W, H - 170);
+            }
+
+            function regHit(id, x, y, w, h, fn) {
+                state.hitboxes.push({ id, x, y, w, h, fn });
+            }
+
+            function roundRect(x, y, w, h, r) {
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.arcTo(x + w, y, x + w, y + h, r);
+                ctx.arcTo(x + w, y + h, x, y + h, r);
+                ctx.arcTo(x, y + h, x, y, r);
+                ctx.arcTo(x, y, x + w, y, r);
+                ctx.closePath();
+            }
+
+            function drawCard(x, y, w, h, r, fill, border = '#1E293B') {
+                roundRect(x, y, w, h, r);
+                ctx.fillStyle = fill;
+                ctx.fill();
+                if (border) {
+                    ctx.strokeStyle = border;
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+                }
+            }
+
+            function render() {
+                state.hitboxes = [];
+                ctx.clearRect(0, 0, W, H);
+
+                const activeCoin = COINS[save.currentIdx];
+                const topUnlockedCoin = COINS[save.unlockedMax];
+                const coinY = getCoinCenterY();
+
+                // Unique Animated Theme Background per Coin Denomination
+                drawCoinThemedBackground(activeCoin, W / 2, coinY);
+
+                // =======================================
+                // 1. TOP NAVIGATION & STATS HEADER
+                // =======================================
+                const pad = 14;
+                drawCard(pad, 12, 96, 38, 10, '#111827', '#1E293B');
+                ctx.fillStyle = '#E2E8F0';
+                ctx.font = '700 13px Inter, system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('← Портал', pad + 48, 31);
+                regHit('portal', pad, 12, 96, 38, () => {
+                    window.location.href = 'index.html';
+                });
+
+                // Center Title + Total Flips & Heads/Tails Ratio
+                ctx.fillStyle = '#F8FAFC';
+                ctx.font = '800 16px Inter, system-ui, sans-serif';
+                ctx.fillText('Орёл или Решка', W / 2, 24);
+
+                ctx.fillStyle = '#94A3B8';
+                ctx.font = '600 11px Inter, system-ui, sans-serif';
+                ctx.fillText(
+                    `Бросков: ${save.totalFlips}  •  Орёл ${save.headsCount} : ${save.tailsCount} Решка`,
+                    W / 2,
+                    42
+                );
+
+                // Sound Toggle Button
+                drawCard(W - pad - 40, 12, 40, 38, 10, '#111827', '#1E293B');
+                ctx.fillStyle = sound.muted ? '#EF4444' : '#FACC15';
+                ctx.font = '700 14px Inter, system-ui, sans-serif';
+                ctx.fillText(sound.muted ? 'OFF' : '♪', W - pad - 20, 31);
+                regHit('mute', W - pad - 40, 12, 40, 38, () => {
+                    sound.toggle();
+                });
+
+                // =======================================
+                // 2. DENOMINATION SELECTOR STRIP (8 COINS)
+                // =======================================
+                const stripW = Math.min(540, W - 28);
+                const stripX = (W - stripW) / 2;
+                const stripY = 60;
+                const gap = 5;
+                const chipW = (stripW - gap * (COINS.length - 1)) / COINS.length;
+                const chipH = 38;
+
+                COINS.forEach((c, idx) => {
+                    const cx = stripX + idx * (chipW + gap);
+                    const unlocked = idx <= save.unlockedMax;
+                    const selected = idx === save.currentIdx;
+
+                    const fill = selected
+                        ? '#1E293B'
+                        : unlocked
+                        ? '#111827'
+                        : '#0B0F19';
+                    const border = selected
+                        ? '#FACC15'
+                        : unlocked
+                        ? '#334155'
+                        : '#1E293B';
+
+                    drawCard(cx, stripY, chipW, chipH, 9, fill, border);
+
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    if (unlocked) {
+                        ctx.fillStyle = selected ? '#FACC15' : '#E2E8F0';
+                        ctx.font = '700 11px Inter, system-ui, sans-serif';
+                        ctx.fillText(c.num, cx + chipW / 2, stripY + 13);
+
+                        ctx.fillStyle = selected ? '#FDE68A' : '#94A3B8';
+                        ctx.font = '600 9px Inter, system-ui, sans-serif';
+                        ctx.fillText(c.id.endsWith('k') ? 'коп' : 'руб', cx + chipW / 2, stripY + 27);
+
+                        regHit(`coin_${idx}`, cx, stripY, chipW, chipH, () => {
+                            if (state.flipping) return;
+                            sound.init();
+                            sound.click();
+                            save.currentIdx = idx;
+                            persist();
+                        });
+                    } else {
+                        ctx.fillStyle = '#475569';
+                        ctx.font = '700 11px Inter, system-ui, sans-serif';
+                        ctx.fillText(c.num, cx + chipW / 2, stripY + 14);
+                        ctx.font = '600 8px Inter, system-ui, sans-serif';
+                        ctx.fillText('ЗАКР', cx + chipW / 2, stripY + 27);
+                    }
+                });
+
+                // =======================================
+                // 3. PROGRESSION BAR CARD
+                // =======================================
+                const progW = Math.min(440, W - 28);
+                const progX = (W - progW) / 2;
+                const progY = 106;
+                drawCard(progX, progY, progW, 52, 12, 'rgba(17, 24, 39, 0.88)', '#1E293B');
+
+                if (save.unlockedMax < COINS.length - 1) {
+                    const nextCoin = COINS[save.unlockedMax + 1];
+                    const mult = getFlipRewardMultiplier();
+                    const pct = Math.min(1, save.progress / topUnlockedCoin.reqToNext);
+
+                    ctx.textAlign = 'left';
+                    ctx.fillStyle = '#E2E8F0';
+                    ctx.font = '700 12px Inter, system-ui, sans-serif';
+                    ctx.fillText(`До «${nextCoin.short}»:`, progX + 12, progY + 18);
+
+                    ctx.textAlign = 'right';
+                    ctx.fillStyle = '#FACC15';
+                    ctx.fillText(
+                        `${Number(save.progress.toFixed(2))} / ${topUnlockedCoin.reqToNext}`,
+                        progX + progW - 12,
+                        progY + 18
+                    );
+
+                    const bx = progX + 12;
+                    const by = progY + 30;
+                    const bw = progW - 24;
+                    const bh = 8;
+                    roundRect(bx, by, bw, bh, 4);
+                    ctx.fillStyle = '#090D16';
+                    ctx.fill();
+
+                    if (pct > 0) {
+                        roundRect(bx, by, Math.max(8, bw * pct), bh, 4);
+                        const barG = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+                        barG.addColorStop(0, '#F59E0B');
+                        barG.addColorStop(1, '#FACC15');
+                        ctx.fillStyle = barG;
+                        ctx.fill();
+                    }
+
+                    if (mult < 1) {
+                        ctx.textAlign = 'center';
+                        ctx.fillStyle = '#38BDF8';
+                        ctx.font = '600 10px Inter, system-ui, sans-serif';
+                        ctx.fillText(
+                            `Прошлая монета (${activeCoin.short}): вклад ×${mult} за бросок`,
+                            W / 2,
+                            progY + 46
+                        );
+                    }
+                } else {
+                    ctx.textAlign = 'center';
+                    ctx.fillStyle = '#FACC15';
+                    ctx.font = '700 13px Inter, system-ui, sans-serif';
+                    ctx.fillText('Все монеты открыты! Максимум: 10 рублей', W / 2, progY + 26);
+                }
+
+                // =======================================
+                // 4. 3D COIN STAGE + TAP AREA
+                // =======================================
+                drawCoin3D(activeCoin, W / 2, coinY, state.currentAngle, state.jumpHeight, state.tiltWobble);
+
+                regHit('coin_tap', W / 2 - 125, coinY - 125, 250, 250, () => {
+                    triggerFlip();
+                });
+
+                // =======================================
+                // 5. BOTTOM OUTCOME BANNER & FLIP BUTTON
+                // =======================================
+                const ctrlW = Math.min(440, W - 28);
+                const ctrlX = (W - ctrlW) / 2;
+                const flipBtnH = 54;
+                const flipBtnY = H - flipBtnH - 18;
+                const statusY = flipBtnY - 34;
+
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                if (state.flipping) {
+                    ctx.fillStyle = '#94A3B8';
+                    ctx.font = '700 14px Inter, system-ui, sans-serif';
+                    ctx.fillText('Монета в воздухе...', W / 2, statusY + 12);
+                } else if (state.lastOutcomeText) {
+                    ctx.fillStyle = state.lastOutcomeColor;
+                    ctx.font = '800 15px Inter, system-ui, sans-serif';
+                    ctx.fillText(state.lastOutcomeText, W / 2, statusY + 6);
+
+                    if (state.lastOutcomeSub) {
+                        ctx.fillStyle = '#94A3B8';
+                        ctx.font = '600 11px Inter, system-ui, sans-serif';
+                        ctx.fillText(state.lastOutcomeSub, W / 2, statusY + 23);
+                    }
+                } else {
+                    ctx.fillStyle = '#94A3B8';
+                    ctx.font = '600 13px Inter, system-ui, sans-serif';
+                    ctx.fillText('Напишите варианты сверху или сразу подбросьте монету', W / 2, statusY + 12);
+                }
+
+                // Primary Flip Button
+                roundRect(ctrlX, flipBtnY, ctrlW, flipBtnH, 14);
+                const btnGrad = ctx.createLinearGradient(0, flipBtnY, 0, flipBtnY + flipBtnH);
+                if (state.flipping) {
+                    btnGrad.addColorStop(0, '#334155');
+                    btnGrad.addColorStop(1, '#1E293B');
+                } else {
+                    btnGrad.addColorStop(0, '#FDE047');
+                    btnGrad.addColorStop(1, '#F59E0B');
+                }
+                ctx.fillStyle = btnGrad;
+                ctx.fill();
+
+                ctx.fillStyle = state.flipping ? '#94A3B8' : '#090D16';
+                ctx.font = '800 16px Inter, system-ui, sans-serif';
+                ctx.fillText(
+                    state.flipping ? 'МОНЕТА ЛЕТИТ...' : `ПОДБРОСИТЬ (${activeCoin.short.toUpperCase()})`,
+                    W / 2,
+                    flipBtnY + flipBtnH / 2 + 1
+                );
+
+                regHit('flip_btn', ctrlX, flipBtnY, ctrlW, flipBtnH, () => {
+                    triggerFlip();
+                });
+
+                // =======================================
+                // 6. PARTICLES, FLOATERS & UNLOCK BANNER
+                // =======================================
+                for (const p of state.particles) {
+                    ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+
+                for (const f of state.floaters) {
+                    ctx.globalAlpha = Math.max(0, Math.min(1, f.life * 1.4));
+                    ctx.font = `800 ${Math.round(15 * f.scale)}px Inter, system-ui, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.fillStyle = '#090D16';
+                    ctx.fillText(f.text, f.x + 1.5, f.y + 1.5);
+                    ctx.fillStyle = f.color;
+                    ctx.fillText(f.text, f.x, f.y);
+                }
+                ctx.globalAlpha = 1;
+
+                if (state.unlockBannerTimer > 0) {
+                    const bw = Math.min(360, W - 28);
+                    const bx = (W - bw) / 2;
+                    const by = 208;
+                    drawCard(bx, by, bw, 38, 10, '#1E293B', '#FACC15');
+                    ctx.fillStyle = '#FACC15';
+                    ctx.font = '700 12px Inter, system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(state.unlockBannerTitle, W / 2, by + 19);
+                }
+
+                // =======================================
+                // 7. WIN RESULT MODAL (IF GOALS WERE SET)
+                // =======================================
+                if (state.winModal) {
+                    const wm = state.winModal;
+
+                    ctx.fillStyle = 'rgba(5, 8, 17, 0.76)';
+                    ctx.fillRect(0, 0, W, H);
+
+                    const mw = Math.min(370, W - 32);
+                    const mh = wm.loserText ? 228 : 196;
+                    const mx = (W - mw) / 2;
+                    const my = (H - mh) / 2;
+
+                    ctx.save();
+                    const sc = 0.85 + 0.15 * Math.sin((wm.scale * Math.PI) / 2);
+                    ctx.translate(W / 2, H / 2);
+                    ctx.scale(sc, sc);
+                    ctx.translate(-W / 2, -H / 2);
+
+                    drawCard(mx, my, mw, mh, 18, '#111827', wm.color);
+
+                    // Header badge ("ВЫПАЛ ОРЁЛ!" / "ВЫПАЛА РЕШКА!")
+                    const badgeW = 164;
+                    const badgeH = 28;
+                    roundRect((W - badgeW) / 2, my + 16, badgeW, badgeH, 14);
+                    ctx.fillStyle = wm.color;
+                    ctx.fill();
+
+                    ctx.fillStyle = '#090D16';
+                    ctx.font = '800 12px Inter, system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(
+                        wm.sideLabel === 'ОРЁЛ' ? 'ВЫПАЛ ОРЁЛ!' : 'ВЫПАЛА РЕШКА!',
+                        W / 2,
+                        my + 16 + badgeH / 2 + 0.5
+                    );
+
+                    // Subtitle "ПОБЕДИЛ ВАРИАНТ:"
+                    ctx.fillStyle = '#94A3B8';
+                    ctx.font = '600 11px Inter, system-ui, sans-serif';
+                    ctx.fillText('ПОБЕДИЛ ВАРИАНТ:', W / 2, my + 62);
+
+                    // Winner Text
+                    ctx.fillStyle = '#FFFFFF';
+                    const fontSize = wm.winnerText.length > 18 ? 19 : 23;
+                    ctx.font = `800 ${fontSize}px Inter, system-ui, sans-serif`;
+                    ctx.fillText(`«${wm.winnerText}»`, W / 2, my + 92);
+
+                    // Optional second option comparison
+                    if (wm.loserText) {
+                        ctx.fillStyle = '#64748B';
+                        ctx.font = '500 12px Inter, system-ui, sans-serif';
+                        ctx.fillText(`${wm.loserLabel}: «${wm.loserText}»`, W / 2, my + 124);
+                    }
+
+                    // Close Button ("ОТЛИЧНО")
+                    const btnW = mw - 44;
+                    const btnH = 44;
+                    const btnX = mx + 22;
+                    const btnY = my + mh - btnH - 18;
+
+                    roundRect(btnX, btnY, btnW, btnH, 12);
+                    ctx.fillStyle = wm.color;
+                    ctx.fill();
+
+                    ctx.fillStyle = '#090D16';
+                    ctx.font = '800 14px Inter, system-ui, sans-serif';
+                    ctx.fillText('ОТЛИЧНО', W / 2, btnY + btnH / 2 + 1);
+
+                    ctx.restore();
+
+                    regHit('win_modal_backdrop', 0, 0, W, H, () => {
+                        sound.click();
+                        state.winModal = null;
+                    });
+                    regHit('win_modal_close', btnX, btnY, btnW, btnH, () => {
+                        sound.click();
+                        state.winModal = null;
+                    });
+                }
+            }
+
+            // =========================================================
+            // 9. POINTER & KEYBOARD HANDLERS
+            // =========================================================
+            canvas.addEventListener('pointerdown', (e) => {
+                if (document.activeElement === headsInput || document.activeElement === tailsInput) {
+                    document.activeElement.blur();
+                }
+
+                e.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                const px = e.clientX - rect.left;
+                const py = e.clientY - rect.top;
+
+                for (let i = state.hitboxes.length - 1; i >= 0; i--) {
+                    const hb = state.hitboxes[i];
+                    if (px >= hb.x && px <= hb.x + hb.w && py >= hb.y && py <= hb.y + hb.h) {
+                        hb.fn();
+                        return;
+                    }
+                }
+            });
+
+            window.addEventListener('keydown', (e) => {
+                if (document.activeElement === headsInput || document.activeElement === tailsInput) {
+                    if (e.code === 'Enter') {
+                        e.preventDefault();
+                        document.activeElement.blur();
+                        triggerFlip();
+                    }
+                    return;
+                }
+                if (state.winModal && (e.code === 'Space' || e.code === 'Enter' || e.code === 'Escape')) {
+                    e.preventDefault();
+                    sound.click();
+                    state.winModal = null;
+                    return;
+                }
+                if (e.code === 'Space' || e.code === 'Enter') {
+                    e.preventDefault();
+                    triggerFlip();
+                }
+            });
+
+            // =========================================================
+            // 10. MAIN ANIMATION LOOP
+            // =========================================================
+            let lastTs = 0;
+            function loop(ts) {
+                if (!lastTs) lastTs = ts;
+                const dt = Math.min(0.05, (ts - lastTs) / 1000);
+                lastTs = ts;
+
+                update(dt);
+                render();
+
+                requestAnimationFrame(loop);
+            }
+
+            window.onload = function () {
+                requestAnimationFrame(loop);
+            };
+        })();
+    </script>
+</body>
+</html>
