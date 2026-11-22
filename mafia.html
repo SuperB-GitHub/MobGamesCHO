@@ -155,7 +155,7 @@
                                 <span class="w-2.5 h-2.5 rounded-full bg-pink-500"></span>
                                 <span class="font-bold text-sm text-white">Проститутка</span>
                             </div>
-                            <p class="text-xs text-slate-400 mt-0.5">Блокирует ночное действие выбранного игрока</p>
+                            <p class="text-xs text-slate-400 mt-0.5">Блокирует ход выбранного игрока и спасает его от смерти ночью</p>
                         </div>
                         <div class="flex items-center gap-2 shrink-0">
                             <button type="button" onclick="changeRoleCount('prostitute', -1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold">−</button>
@@ -225,7 +225,7 @@
                                 <span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
                                 <span class="font-bold text-sm text-white">Патрульный</span>
                             </div>
-                            <p class="text-xs text-slate-400 mt-0.5">Включается в игру и проверяет игроков, если убили Комиссара</p>
+                            <p class="text-xs text-slate-400 mt-0.5">Патрулирует игрока и замечает ночных гостей</p>
                         </div>
                         <div class="flex items-center gap-2 shrink-0">
                             <button type="button" onclick="changeRoleCount('patrol', -1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold">−</button>
@@ -406,7 +406,7 @@
                 dotClass: 'bg-pink-500',
                 wakeTitle: 'Действие проститутки',
                 speech: '«Мафия засыпает. Просыпается Проститутка и выбирает, к кому отправится в гости этой ночью.»',
-                hostHint: 'Выбранный игрок получает алиби/блокировку: его ночное действие отменяется (если вся мафия заблокирована — выстрел мафии срывается).',
+                hostHint: 'Выбранный игрок получает алиби: его ночное действие блокируется, а также он защищён (вылечен) от любых ночных покушений Мафии и Маньяка.',
                 actionLabel: 'К кому пришла Проститутка:'
             },
             commissar: {
@@ -452,10 +452,10 @@
                 team: 'town',
                 badgeClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
                 dotClass: 'bg-amber-500',
-                wakeTitle: 'Действие патрульного (замена Комиссара)',
-                speech: '«Комиссар выбыл из игры — в дело вступает Патрульный! Просыпается Патрульный и выбирает игрока для проверки.»',
-                hostHint: 'Так как Комиссар погиб, Патрульный перенял его полномочия. Покажите Патрульному, является ли выбранный игрок Мафией.',
-                actionLabel: 'Кого проверяет Патрульный:'
+                wakeTitle: 'Действие патрульного',
+                speech: '«Просыпается Патрульный и выбирает дом игрока, за которым будет вести наблюдение этой ночью.»',
+                hostHint: 'После выбора вы сразу увидите, приходил ли кто-то ночью к выбранному игроку (Мафия, Проститутка, Комиссар, Доктор или Маньяк), чтобы показать это Патрульному.',
+                actionLabel: 'За кем наблюдает Патрульный:'
             },
             civilian: {
                 key: 'civilian',
@@ -495,9 +495,13 @@
 
         const playersInput = document.getElementById('playersInput');
 
-        playersInput.addEventListener('input', () => {
-            parsePlayersFromInput();
-            renderSetupUI();
+        ['input', 'change', 'keyup', 'paste'].forEach(evtName => {
+            playersInput.addEventListener(evtName, () => {
+                setTimeout(() => {
+                    parsePlayersFromInput();
+                    renderSetupUI();
+                }, 0);
+            });
         });
 
         /**
@@ -506,7 +510,7 @@
         function parsePlayersFromInput() {
             const raw = playersInput.value || '';
             const parts = raw
-                .split(/[\n,;]+/)
+                .split(/[\r\n,;]+/)
                 .map(s => s.trim().replace(/\s+/g, ' '))
                 .filter(Boolean);
 
@@ -820,16 +824,11 @@
          * Формирует порядок пробуждения ролей на текущую ночь (только живые роли в партии)
          */
         function prepareNightQueue() {
-            // Порядок пробуждения: Мафия -> Проститутка -> Комиссар (или Патрульный, если Комиссар убит) -> Доктор -> Маньяк
+            // Порядок пробуждения: Мафия -> Проститутка -> Комиссар -> Доктор -> Маньяк -> Патрульный
             const order = ['mafia', 'prostitute', 'commissar', 'doctor', 'maniac', 'patrol'];
-            const aliveCommissarCount = gameState.players.filter(p => p.alive && p.roleKey === 'commissar').length;
             const queue = [];
 
             for (const roleKey of order) {
-                // Патрульный включается в игру только после гибели Комиссара
-                if (roleKey === 'patrol' && aliveCommissarCount > 0) {
-                    continue;
-                }
                 const aliveWithRole = gameState.players.filter(p => p.alive && p.roleKey === roleKey);
                 if (aliveWithRole.length > 0) {
                     queue.push(roleKey);
@@ -886,12 +885,12 @@
             const aliveMafia = gameState.players.filter(p => p.alive && p.roleKey === 'mafia');
             const isMafiaBlocked = aliveMafia.length > 0 && aliveMafia.every(m => isPlayerBlocked(m.name));
 
-            // 1. Действие Проститутки
+            // 1. Действие Проститутки (блокирует ход и лечит цель)
             if (actions.prostitute) {
                 summary.push({
                     roleKey: 'prostitute',
                     iconColor: 'bg-pink-500',
-                    text: `Проститутка провела ночь у игрока ${actions.prostitute} (действие заблокировано).`
+                    text: `Проститутка провела ночь у игрока ${actions.prostitute} (ход заблокирован, дана защита от смерти).`
                 });
             }
 
@@ -976,33 +975,33 @@
 
             // 6. Действие Патрульного
             if (actions.patrol) {
-            // 6. Действие Патрульного (активен после гибели Комиссара и выполняет проверку на мафию)
-            if (actions.patrol) {
                 const patPlayer = gameState.players.find(p => p.alive && p.roleKey === 'patrol');
                 if (patPlayer && isPlayerBlocked(patPlayer.name)) {
                     summary.push({
                         roleKey: 'patrol',
                         iconColor: 'bg-amber-500',
-                        text: `Патрульный хотел проверить игрока ${actions.patrol}, но был заблокирован.`
+                        text: `Патрульный собирался следить за игроком ${actions.patrol}, но был заблокирован.`
                     });
                 } else {
-                    const checkedObj = gameState.players.find(p => p.name === actions.patrol);
-                    const isMaf = checkedObj && checkedObj.roleKey === 'mafia';
+                    const visitors = getVisitorsForTarget(actions.patrol);
+                    const visitDesc = visitors.length > 0
+                        ? `замечены гости: ${visitors.join(', ')}`
+                        : 'никто не приходил';
                     summary.push({
                         roleKey: 'patrol',
                         iconColor: 'bg-amber-500',
-                        text: `Патрульный (вступивший в игру после гибели Комиссара) проверил игрока ${actions.patrol} (результат: ${isMaf ? 'Мафия' : 'Не мафия'}).`
+                        text: `Патрульный наблюдал за игроком ${actions.patrol} (${visitDesc}).`
                     });
                 }
             }
 
-            // Подсчёт реальных смертей с учётом лечения Доктора
+            // Подсчёт реальных смертей с учётом лечения Доктора и защиты Проститутки
             const deadNames = new Set();
             const savedNames = new Set();
 
             for (const victim of [mafiaVictim, maniacVictim]) {
                 if (!victim) continue;
-                if (healedTarget === victim) {
+                if (healedTarget === victim || blockedPlayerName === victim) {
                     savedNames.add(victim);
                 } else {
                     deadNames.add(victim);
@@ -1194,13 +1193,19 @@
 
                 // Мгновенная подсказка результата для Комиссара и Патрульного при выборе цели
                 let instantCheckHtml = '';
-                if (gameState.currentSelection && (roleKey === 'commissar' || roleKey === 'patrol')) {
+                if (gameState.currentSelection && roleKey === 'commissar') {
                     const targetObj = gameState.players.find(p => p.name === gameState.currentSelection);
                     const isMafia = targetObj && targetObj.roleKey === 'mafia';
-                    const roleTitle = roleKey === 'commissar' ? 'Комиссара' : 'Патрульного';
                     instantCheckHtml = `
                         <div class="rounded-xl p-3.5 border ${isMafia ? 'bg-rose-500/15 border-rose-500/40 text-rose-200' : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-200'} text-sm font-semibold">
-                            Результат проверки для ${roleTitle}: игрок <u>${escapeHtml(gameState.currentSelection)}</u> — ${isMafia ? 'МАФИЯ (кивните)' : 'НЕ МАФИЯ (покажите отрицательный жест)'}.
+                            Результат проверки для Комиссара: игрок <u>${escapeHtml(gameState.currentSelection)}</u> — ${isMafia ? 'МАФИЯ (кивните Комиссару)' : 'НЕ МАФИЯ (покажите отрицательный жест)'}.
+                        </div>
+                    `;
+                } else if (gameState.currentSelection && roleKey === 'patrol') {
+                    const visitors = getVisitorsForTarget(gameState.currentSelection);
+                    instantCheckHtml = `
+                        <div class="rounded-xl p-3.5 border bg-amber-500/15 border-amber-500/40 text-amber-200 text-sm font-semibold">
+                            Отчёт для Патрульного по игроку <u>${escapeHtml(gameState.currentSelection)}</u>: ${visitors.length > 0 ? `ночью приходили (${visitors.join(', ')})` : 'ночью никто не приходил'}.
                         </div>
                     `;
                 }
@@ -1290,7 +1295,7 @@
                 `).join('');
 
                 const savedNote = saved.length > 0
-                    ? `<div class="text-xs text-emerald-400 font-medium">Доктор успешно спас этой ночью: ${escapeHtml(saved.join(', '))}</div>`
+                    ? `<div class="text-xs text-emerald-400 font-medium">Успешно спасены этой ночью (Доктор / Проститутка): ${escapeHtml(saved.join(', '))}</div>`
                     : '';
 
                 body.innerHTML = `
@@ -1472,6 +1477,7 @@
         }
 
         // Инициализация экрана при загрузке
+        parsePlayersFromInput();
         renderSetupUI();
     </script>
 </body>
