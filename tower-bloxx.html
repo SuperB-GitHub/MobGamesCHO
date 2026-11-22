@@ -41,6 +41,7 @@
          * 100% Canvas-rendered classic arcade UI (no modern glass/blur/emoji web widgets).
          * Features:
          *  - Classic Title Screen with swinging crane demo & bold 2005 arcade logo
+         *  - Portal Return Button (< К ИГРАМ) & Instant Build Restart Button (↻)
          *  - 4 Building Tiers (Blue 10fl, Red 15fl, Green 20fl, Yellow 25fl) with strict neighbor rules
          *  - Standard Roof vs GOLDEN ROOF (x2 Population) mechanic with visual center target zone
          *  - Parachuting citizens lighting up apartment windows on arrival
@@ -1762,7 +1763,7 @@
                 // Classic 2005 Title Banner Plaque
                 const panelW = Math.min(340, W - 28);
                 const panelX = (W - panelW) / 2;
-                const panelY = Math.max(24, H * 0.06);
+                const panelY = Math.max(24, H * 0.055);
 
                 drawArcadeBox(panelX, panelY, panelW, 114, '#1E3A8A', '#0F172A', '#111827', '#FACC15');
 
@@ -1785,37 +1786,46 @@
                 ctx.fillStyle = '#FF5252';
                 ctx.fillText('BLOXX', W / 2, panelY + 92);
 
-                // Main Menu Action Buttons
+                // Main Menu Action Buttons & City Progress Block
                 const btnW = Math.min(270, W - 48);
                 const btnX = (W - btnW) / 2;
-                const btnStartY = panelY + 132;
+                const btnStartY = panelY + 128;
 
+                // 1. Primary City Mode Button
                 drawArcadeButton('btn_city', btnX, btnStartY, btnW, 50, 'ИГРАТЬ (ГОРОД)', 'gold', () => {
                     state.mode = 'CITY';
                     state.citySubMode = 'VIEW';
                 }, 17);
 
-                drawArcadeButton('btn_quick', btnX, btnStartY + 60, btnW, 46, 'БЫСТРАЯ ИГРА', 'blue', () => {
-                    startBuild('blue', true);
-                }, 16);
-
-                // City Saved Progress Box
+                // 2. City Saved Progress Box directly below "ИГРАТЬ (ГОРОД)"
                 const stats = getCityStats();
-                const statY = btnStartY + 116;
-                drawArcadeBox(btnX, statY, btnW, 44, '#0F172A', '#1E293B', '#111827', '#38BDF8');
+                const statY = btnStartY + 58;
+                drawArcadeBox(btnX, statY, btnW, 42, '#0F172A', '#1E293B', '#111827', '#38BDF8');
 
-                drawPixelPersonIcon(btnX + 22, statY + 21, 0.95);
+                drawPixelPersonIcon(btnX + 22, statY + 20, 0.95);
                 ctx.fillStyle = '#FFFFFF';
                 ctx.font = `800 13px 'Trebuchet MS', sans-serif`;
                 ctx.textAlign = 'left';
-                ctx.fillText(`ЖИТЕЛЕЙ: ${stats.totalPop}`, btnX + 38, statY + 22);
+                ctx.fillText(`ЖИТЕЛЕЙ: ${stats.totalPop}`, btnX + 38, statY + 21);
 
                 // Golden Roof count badge
                 ctx.fillStyle = '#FFD700';
                 ctx.textAlign = 'right';
-                ctx.fillText(`ЗОЛ.КРЫШ: ${stats.goldenCount}`, btnX + btnW - 12, statY + 22);
+                ctx.fillText(`ЗОЛ.КРЫШ: ${stats.goldenCount}`, btnX + btnW - 12, statY + 21);
 
-                // Small Reset Button in bottom-left & Mute in top-right
+                // 3. Separated Quick Play Button
+                const quickY = statY + 60;
+                drawArcadeButton('btn_quick', btnX, quickY, btnW, 46, 'БЫСТРАЯ ИГРА', 'blue', () => {
+                    startBuild('blue', true);
+                }, 16);
+
+                // 4. Portal Button directly below "БЫСТРАЯ ИГРА"
+                const portalY = quickY + 54;
+                drawArcadeButton('btn_portal_back', btnX, portalY, btnW, 42, 'ПОРТАЛ', 'dark', () => {
+                    window.location.href = 'index.html';
+                }, 14);
+
+                // Mute in top-right & Reset Button in bottom-left
                 drawArcadeButton('btn_mute_title', W - 52, 12, 40, 38, '', 'dark', () => {
                     sfx.toggleMute();
                 });
@@ -2420,12 +2430,12 @@
                 drawArcadeBox(6, 6, W - 12, 52, '#1E3A8A', '#0F172A', '#111827', '#FACC15');
 
                 // Residents / Score Counter
-                drawPixelPersonIcon(24, 31, 1.0);
+                drawPixelPersonIcon(22, 31, 0.95);
                 ctx.fillStyle = '#FACC15';
-                ctx.font = `900 16px 'Arial Black', sans-serif`;
+                ctx.font = `900 15px 'Arial Black', sans-serif`;
                 ctx.textAlign = 'left';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(b.isQuickPlay ? `${b.score}` : `${b.residents}`, 39, 32);
+                ctx.fillText(b.isQuickPlay ? `${b.score}` : `${b.residents}`, 36, 32);
 
                 // Floor Counter Badge (e.g. 05/10 or КРЫША!)
                 const floorText = b.isQuickPlay
@@ -2434,29 +2444,34 @@
                     ? 'КРЫША!'
                     : `${String(b.blocks.length).padStart(2, '0')}/${b.tier.floors}`;
 
-                const badgeX = Math.min(116, W * 0.31);
+                const badgeX = Math.max(82, Math.min(104, W * 0.25));
+                const badgeW = 66;
                 ctx.fillStyle = b.roofPhase ? '#FFD700' : '#020617';
-                ctx.fillRect(badgeX, 17, 74, 30);
+                ctx.fillRect(badgeX, 17, badgeW, 30);
                 ctx.strokeStyle = '#94A3B8';
                 ctx.lineWidth = 1.5;
-                ctx.strokeRect(badgeX, 17, 74, 30);
+                ctx.strokeRect(badgeX, 17, badgeW, 30);
 
                 ctx.fillStyle = b.roofPhase ? '#111827' : '#FFFFFF';
-                ctx.font = `900 12px 'Arial Black', sans-serif`;
+                ctx.font = `900 11px 'Arial Black', sans-serif`;
                 ctx.textAlign = 'center';
-                ctx.fillText(floorText, badgeX + 37, 32);
+                ctx.fillText(floorText, badgeX + badgeW / 2, 32);
 
                 // 3 Classic Red Hearts
-                const heartsStartX = W - 144;
+                const heartsStartX = W - 174;
                 for (let i = 0; i < 3; i++) {
-                    drawPixelHeartIcon(heartsStartX + i * 22, 32, i < b.lives, 0.92);
+                    drawPixelHeartIcon(heartsStartX + i * 20, 32, i < b.lives, 0.88);
                 }
 
-                // Sound & Exit buttons
-                drawArcadeButton('build_mute', W - 78, 13, 34, 38, '', 'dark', () => {
+                // Restart, Sound & Exit buttons
+                drawArcadeButton('build_restart', W - 110, 13, 32, 38, '↻', 'gold', () => {
+                    startBuild(b.tier.id, b.isQuickPlay);
+                }, 16);
+
+                drawArcadeButton('build_mute', W - 75, 13, 32, 38, '', 'dark', () => {
                     sfx.toggleMute();
                 });
-                drawSoundIcon(W - 61, 32, sfx.muted);
+                drawSoundIcon(W - 59, 32, sfx.muted);
 
                 drawArcadeButton('build_exit', W - 40, 13, 28, 38, 'X', 'red', () => {
                     if (b.isQuickPlay) {
