@@ -1,0 +1,1478 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Мафия — Помощник ведущего</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100 font-sans antialiased selection:bg-indigo-500 selection:text-white flex flex-col">
+
+    <!-- Верхняя навигационная панель -->
+    <header class="sticky top-0 z-30 border-b border-slate-800/80 bg-slate-950/85 backdrop-blur-md">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+            <div class="flex items-center gap-3">
+                <a href="index.html"
+                   class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-xs sm:text-sm font-medium transition-colors">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                    </svg>
+                    <span>Портал</span>
+                </a>
+                <div class="flex items-center gap-2.5">
+                    <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-rose-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-rose-600/20">
+                        <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h1 class="font-bold text-base sm:text-lg tracking-tight text-white leading-tight">Мафия</h1>
+                        <p class="text-[11px] text-slate-400 hidden sm:block">Пульт ведущего</p>
+                    </div>
+                </div>
+            </div>
+
+            <div id="headerControls" class="flex items-center gap-2">
+                <button id="btnResetGame" type="button" onclick="confirmResetToMenu()"
+                        class="hidden px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-rose-950/60 border border-slate-800 hover:border-rose-500/40 text-xs sm:text-sm text-slate-300 hover:text-rose-300 font-medium transition-colors">
+                    В меню
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Уведомление-тост (вместо alert) -->
+    <div id="toastBox" class="fixed top-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-300 opacity-0 -translate-y-2">
+        <div id="toastContent" class="px-4 py-2.5 rounded-xl bg-slate-900 border border-rose-500/50 text-rose-200 text-sm font-medium shadow-2xl"></div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- ЭКРАН 1: ГЛАВНОЕ МЕНЮ И НАСТРОЙКА ПАРТИИ                              -->
+    <!-- ===================================================================== -->
+    <main id="setupScreen" class="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-6">
+
+        <!-- Шаг 1: Ввод и парсинг игроков -->
+        <section class="rounded-2xl bg-slate-900/90 border border-slate-800 p-5 sm:p-6 space-y-4">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                    <span class="text-xs font-semibold uppercase tracking-wider text-indigo-400">Шаг 1</span>
+                    <h2 class="text-lg sm:text-xl font-bold text-white">Список игроков</h2>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span id="playerCountBadge" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-xs sm:text-sm font-semibold">
+                        Игроков: 0
+                    </span>
+                    <button type="button" onclick="fillDemoPlayers()"
+                            class="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 font-medium transition-colors">
+                        Пример (8 чел.)
+                    </button>
+                </div>
+            </div>
+
+            <p class="text-xs sm:text-sm text-slate-400">
+                Введите имена игроков <strong>через запятую</strong> или <strong>каждое с новой строки</strong>. Дубликаты и пустые строки очищаются автоматически.
+            </p>
+
+            <textarea id="playersInput" rows="4"
+                      placeholder="Например:&#10;Алексей, Мария, Дмитрий, Елена, Сергей, Ольга, Иван, Анна"
+                      class="w-full rounded-xl bg-slate-950 border border-slate-800 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none p-3.5 text-sm text-slate-100 placeholder-slate-600 transition-all"></textarea>
+
+            <!-- Чипы распознанных игроков -->
+            <div id="parsedChips" class="flex flex-wrap gap-1.5 min-h-[28px]"></div>
+        </section>
+
+        <!-- Шаг 2: Расчёт количества доступных ролей -->
+        <section class="rounded-2xl bg-slate-900/90 border border-slate-800 p-5 sm:p-6 space-y-5">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                    <span class="text-xs font-semibold uppercase tracking-wider text-indigo-400">Шаг 2</span>
+                    <h2 class="text-lg sm:text-xl font-bold text-white">Состав ролей в игре</h2>
+                </div>
+                <button type="button" onclick="applyRecommendedRoles()"
+                        class="self-start sm:self-auto px-3.5 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 text-xs sm:text-sm font-semibold transition-colors">
+                    Авто-баланс по числу игроков
+                </button>
+            </div>
+
+            <!-- Сводка баланса слотов -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div class="rounded-xl bg-slate-950/90 border border-slate-800 p-3">
+                    <div class="text-[11px] text-slate-400">Всего игроков</div>
+                    <div id="statTotalPlayers" class="text-xl font-extrabold text-white mt-0.5">0</div>
+                </div>
+                <div class="rounded-xl bg-slate-950/90 border border-slate-800 p-3">
+                    <div class="text-[11px] text-slate-400">Активных ролей</div>
+                    <div id="statActiveRoles" class="text-xl font-extrabold text-indigo-400 mt-0.5">0</div>
+                </div>
+                <div class="rounded-xl bg-slate-950/90 border border-slate-800 p-3">
+                    <div class="text-[11px] text-slate-400">Мирных жителей</div>
+                    <div id="statCivilians" class="text-xl font-extrabold text-emerald-400 mt-0.5">0</div>
+                </div>
+                <div class="rounded-xl bg-slate-950/90 border border-slate-800 p-3">
+                    <div class="text-[11px] text-slate-400">Рекоменд. мафий</div>
+                    <div id="statRecMafia" class="text-xl font-extrabold text-rose-400 mt-0.5">0</div>
+                </div>
+            </div>
+
+            <!-- Основные роли -->
+            <div class="space-y-3">
+                <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Основные роли</h3>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <!-- Мафия -->
+                    <div class="rounded-xl bg-slate-950 border border-slate-800 p-3.5 flex items-center justify-between gap-3">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+                                <span class="font-bold text-sm text-white">Мафия</span>
+                            </div>
+                            <p class="text-xs text-slate-400 mt-0.5">Просыпаются вместе и устраняют одного игрока</p>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <button type="button" onclick="changeRoleCount('mafia', -1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold">−</button>
+                            <span id="count_mafia" class="w-6 text-center font-bold text-white">1</span>
+                            <button type="button" onclick="changeRoleCount('mafia', 1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold">+</button>
+                        </div>
+                    </div>
+
+                    <!-- Проститутка -->
+                    <div class="rounded-xl bg-slate-950 border border-slate-800 p-3.5 flex items-center justify-between gap-3">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-pink-500"></span>
+                                <span class="font-bold text-sm text-white">Проститутка</span>
+                            </div>
+                            <p class="text-xs text-slate-400 mt-0.5">Блокирует ночное действие выбранного игрока</p>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <button type="button" onclick="changeRoleCount('prostitute', -1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold">−</button>
+                            <span id="count_prostitute" class="w-6 text-center font-bold text-white">0</span>
+                            <button type="button" onclick="changeRoleCount('prostitute', 1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold">+</button>
+                        </div>
+                    </div>
+
+                    <!-- Комиссар -->
+                    <div class="rounded-xl bg-slate-950 border border-slate-800 p-3.5 flex items-center justify-between gap-3">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-sky-500"></span>
+                                <span class="font-bold text-sm text-white">Комиссар</span>
+                            </div>
+                            <p class="text-xs text-slate-400 mt-0.5">Проверяет статус игрока (Мафия / Не мафия)</p>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <button type="button" onclick="changeRoleCount('commissar', -1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold">−</button>
+                            <span id="count_commissar" class="w-6 text-center font-bold text-white">1</span>
+                            <button type="button" onclick="changeRoleCount('commissar', 1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold">+</button>
+                        </div>
+                    </div>
+
+                    <!-- Доктор -->
+                    <div class="rounded-xl bg-slate-950 border border-slate-800 p-3.5 flex items-center justify-between gap-3">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                                <span class="font-bold text-sm text-white">Доктор</span>
+                            </div>
+                            <p class="text-xs text-slate-400 mt-0.5">Лечит одного игрока ночью, спасая от смерти</p>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <button type="button" onclick="changeRoleCount('doctor', -1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold">−</button>
+                            <span id="count_doctor" class="w-6 text-center font-bold text-white">1</span>
+                            <button type="button" onclick="changeRoleCount('doctor', 1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold">+</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Дополнительные персонажи -->
+            <div class="space-y-3 pt-1">
+                <h3 class="text-xs font-semibold uppercase tracking-wider text-amber-400">Дополнительные персонажи</h3>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <!-- Маньяк -->
+                    <div class="rounded-xl bg-slate-950 border border-slate-800 p-3.5 flex items-center justify-between gap-3">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-purple-500"></span>
+                                <span class="font-bold text-sm text-white">Маньяк</span>
+                            </div>
+                            <p class="text-xs text-slate-400 mt-0.5">Одиночка: убивает любого игрока каждую ночь</p>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <button type="button" onclick="changeRoleCount('maniac', -1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold">−</button>
+                            <span id="count_maniac" class="w-6 text-center font-bold text-white">0</span>
+                            <button type="button" onclick="changeRoleCount('maniac', 1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold">+</button>
+                        </div>
+                    </div>
+
+                    <!-- Патрульный -->
+                    <div class="rounded-xl bg-slate-950 border border-slate-800 p-3.5 flex items-center justify-between gap-3">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                                <span class="font-bold text-sm text-white">Патрульный</span>
+                            </div>
+                            <p class="text-xs text-slate-400 mt-0.5">Включается в игру и проверяет игроков, если убили Комиссара</p>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <button type="button" onclick="changeRoleCount('patrol', -1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold">−</button>
+                            <span id="count_patrol" class="w-6 text-center font-bold text-white">0</span>
+                            <button type="button" onclick="changeRoleCount('patrol', 1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold">+</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Шаг 3: Назначение игроков на роли (Combobox) -->
+        <section class="rounded-2xl bg-slate-900/90 border border-slate-800 p-5 sm:p-6 space-y-4">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                    <span class="text-xs font-semibold uppercase tracking-wider text-indigo-400">Шаг 3</span>
+                    <h2 class="text-lg sm:text-xl font-bold text-white">Назначение ролей игрокам</h2>
+                </div>
+                <button type="button" onclick="autoAssignRandomRoles()"
+                        class="self-start sm:self-auto px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs sm:text-sm font-medium transition-colors">
+                    Случайно распределить
+                </button>
+            </div>
+
+            <p class="text-xs sm:text-sm text-slate-400">
+                Выберите игрока из выпадающего списка (combobox) для каждой активной роли. Все неназначенные игроки автоматически становятся <strong class="text-emerald-400">Мирными жителями</strong>.
+            </p>
+
+            <div id="roleComboboxList" class="space-y-2.5"></div>
+
+            <!-- Предпросмотр мирных жителей -->
+            <div class="rounded-xl bg-slate-950/80 border border-slate-800/90 p-3.5">
+                <div class="text-xs font-semibold text-emerald-400 mb-1.5">Мирные жители (автоматически):</div>
+                <div id="civiliansPreview" class="text-xs sm:text-sm text-slate-300">Добавьте игроков выше</div>
+            </div>
+        </section>
+
+        <!-- Шаг 4: Параметры игры (Checkboxes) и запуск -->
+        <section class="rounded-2xl bg-slate-900/90 border border-slate-800 p-5 sm:p-6 space-y-5">
+            <div>
+                <span class="text-xs font-semibold uppercase tracking-wider text-indigo-400">Шаг 4</span>
+                <h2 class="text-lg sm:text-xl font-bold text-white">Параметры партии</h2>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <!-- Чекбокс подсказок -->
+                <label class="flex items-start gap-3 p-3.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-indigo-500/50 cursor-pointer transition-colors">
+                    <input id="chkHints" type="checkbox" checked
+                           class="mt-0.5 w-5 h-5 rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500">
+                    <div>
+                        <div class="font-semibold text-sm text-white">Подсказки для ведущего</div>
+                        <div class="text-xs text-slate-400 mt-0.5">Показывать фразы для озвучивания вслух и инструкции на каждом шаге ночи</div>
+                    </div>
+                </label>
+
+                <!-- Чекбокс закрытой игры -->
+                <label class="flex items-start gap-3 p-3.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-indigo-500/50 cursor-pointer transition-colors">
+                    <input id="chkClosedGame" type="checkbox"
+                           class="mt-0.5 w-5 h-5 rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500">
+                    <div>
+                        <div class="font-semibold text-sm text-white">Закрытая игра</div>
+                        <div class="text-xs text-slate-400 mt-0.5">Утром объявляются только имена выбывших игроков без раскрытия их ролей</div>
+                    </div>
+                </label>
+            </div>
+
+            <button type="button" onclick="startGame()"
+                    class="w-full py-4 px-6 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold text-base shadow-lg shadow-indigo-600/25 transition-all flex items-center justify-center gap-2">
+                <span>Запустить игру</span>
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                </svg>
+            </button>
+        </section>
+    </main>
+
+    <!-- ===================================================================== -->
+    <!-- ЭКРАН 2: ИГРОВОЙ ПРОЦЕСС (НОЧНЫЕ ДИАЛОГИ, ИТОГИ НОЧИ, ДЕНЬ)           -->
+    <!-- ===================================================================== -->
+    <main id="gameScreen" class="hidden flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-6">
+
+        <!-- Индикатор фазы и режимов -->
+        <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+                <span id="phaseBadge" class="px-3.5 py-1.5 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-xs sm:text-sm font-bold">
+                    Ночь 1
+                </span>
+                <span id="modeClosedBadge" class="hidden px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-semibold">
+                    Закрытая игра
+                </span>
+            </div>
+
+            <button type="button" onclick="toggleRosterDrawer()"
+                    class="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs sm:text-sm font-medium text-slate-200 transition-colors">
+                Шпаргалка ролей ведущего
+            </button>
+        </div>
+
+        <!-- Выдвижная панель ролей для ведущего -->
+        <div id="hostRosterPanel" class="hidden rounded-2xl bg-slate-900 border border-slate-800 p-4 sm:p-5 space-y-3">
+            <div class="flex items-center justify-between">
+                <h3 class="text-sm font-bold text-white">Все игроки и их роли (только для ведущего)</h3>
+                <button type="button" onclick="toggleRosterDrawer()" class="text-xs text-slate-400 hover:text-white">Скрыть</button>
+            </div>
+            <div id="hostRosterGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2"></div>
+        </div>
+
+        <!-- ЦЕНТРАЛЬНОЕ ДИАЛОГОВОЕ ОКНО ФАЗЫ -->
+        <section id="dialogCard" class="rounded-3xl bg-slate-900/95 border border-slate-800 shadow-2xl overflow-hidden">
+            <!-- Шапка диалога -->
+            <div id="dialogHeader" class="px-5 sm:px-8 py-5 border-b border-slate-800/90 bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900">
+                <div id="dialogSubTitle" class="text-xs font-bold uppercase tracking-widest text-indigo-400">
+                    Ночь 1 • Действие роли
+                </div>
+                <h2 id="dialogTitle" class="text-2xl sm:text-3xl font-extrabold text-white mt-1">
+                    Действие мафии
+                </h2>
+            </div>
+
+            <!-- Тело диалога -->
+            <div id="dialogBody" class="p-5 sm:p-8 space-y-6">
+                <!-- Контент рендерится динамически -->
+            </div>
+        </section>
+
+        <!-- Статус-бар живых игроков -->
+        <section class="rounded-2xl bg-slate-900/70 border border-slate-800/80 p-4 sm:p-5">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Живые за столом</h3>
+                <span id="aliveCountLabel" class="text-xs font-semibold text-emerald-400">0 живых</span>
+            </div>
+            <div id="alivePlayersChips" class="flex flex-wrap gap-2"></div>
+        </section>
+
+    </main>
+
+    <!-- Модальное окно подтверждения сброса -->
+    <div id="resetModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="max-w-sm w-full rounded-2xl bg-slate-900 border border-slate-800 p-6 space-y-4 shadow-2xl">
+            <h3 class="text-lg font-bold text-white">Завершить текущую партию?</h3>
+            <p class="text-sm text-slate-400">Вы вернётесь в главное меню настройки игроков и ролей. Текущий прогресс ночи/дня будет сброшен.</p>
+            <div class="flex items-center justify-end gap-2.5 pt-2">
+                <button type="button" onclick="closeResetModal()"
+                        class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-sm font-medium text-slate-200">
+                    Отмена
+                </button>
+                <button type="button" onclick="resetToMenu()"
+                        class="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-sm font-semibold text-white">
+                    В главное меню
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * Справочник ролей игры
+         */
+        const ROLE_DEFS = {
+            mafia: {
+                key: 'mafia',
+                name: 'Мафия',
+                plural: 'Мафия',
+                team: 'mafia',
+                badgeClass: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
+                dotClass: 'bg-rose-500',
+                wakeTitle: 'Действие мафии',
+                speech: '«Город засыпает. Просыпается Мафия. Мафия знакомится и делает свой выбор — кого устранить этой ночью.»',
+                hostHint: 'Попросите игроков с ролью Мафия тихо открыть глаза и жестами указать на одну жертву. Зафиксируйте их выбор ниже.',
+                actionLabel: 'Кого выбрала Мафия:'
+            },
+            prostitute: {
+                key: 'prostitute',
+                name: 'Проститутка',
+                plural: 'Проститутка',
+                team: 'town',
+                badgeClass: 'bg-pink-500/15 text-pink-300 border-pink-500/30',
+                dotClass: 'bg-pink-500',
+                wakeTitle: 'Действие проститутки',
+                speech: '«Мафия засыпает. Просыпается Проститутка и выбирает, к кому отправится в гости этой ночью.»',
+                hostHint: 'Выбранный игрок получает алиби/блокировку: его ночное действие отменяется (если вся мафия заблокирована — выстрел мафии срывается).',
+                actionLabel: 'К кому пришла Проститутка:'
+            },
+            commissar: {
+                key: 'commissar',
+                name: 'Комиссар',
+                plural: 'Комиссар',
+                team: 'town',
+                badgeClass: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
+                dotClass: 'bg-sky-500',
+                wakeTitle: 'Действие комиссара',
+                speech: '«Просыпается Комиссар. Комиссар выбирает игрока, которого хочет проверить на причастность к мафии.»',
+                hostHint: 'Покажите Комиссару кивком или жестом, является ли выбранный игрок Мафией (Маньяк и мирные роли показываются как «Не мафия»).',
+                actionLabel: 'Кого проверяет Комиссар:'
+            },
+            doctor: {
+                key: 'doctor',
+                name: 'Доктор',
+                plural: 'Доктор',
+                team: 'town',
+                badgeClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+                dotClass: 'bg-emerald-500',
+                wakeTitle: 'Действие доктора',
+                speech: '«Комиссар засыпает. Просыпается Доктор и решает, кого он будет лечить этой ночью.»',
+                hostHint: 'Если Доктор угадает цель Мафии или Маньяка, этот игрок будет спасён и останется в игре утром.',
+                actionLabel: 'Кого лечит Доктор:'
+            },
+            maniac: {
+                key: 'maniac',
+                name: 'Маньяк',
+                plural: 'Маньяк',
+                team: 'maniac',
+                badgeClass: 'bg-purple-500/15 text-purple-300 border-purple-500/30',
+                dotClass: 'bg-purple-500',
+                wakeTitle: 'Действие маньяка',
+                speech: '«Доктор засыпает. Просыпается Маньяк и выбирает свою ночную жертву.»',
+                hostHint: 'Маньяк играет сам за себя и побеждает, оставшись один на один с последним игроком. Выберите, кого он атакует.',
+                actionLabel: 'Кого атакует Маньяк:'
+            },
+            patrol: {
+                key: 'patrol',
+                name: 'Патрульный',
+                plural: 'Патрульный',
+                team: 'town',
+                badgeClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+                dotClass: 'bg-amber-500',
+                wakeTitle: 'Действие патрульного (замена Комиссара)',
+                speech: '«Комиссар выбыл из игры — в дело вступает Патрульный! Просыпается Патрульный и выбирает игрока для проверки.»',
+                hostHint: 'Так как Комиссар погиб, Патрульный перенял его полномочия. Покажите Патрульному, является ли выбранный игрок Мафией.',
+                actionLabel: 'Кого проверяет Патрульный:'
+            },
+            civilian: {
+                key: 'civilian',
+                name: 'Мирный житель',
+                plural: 'Мирные жители',
+                team: 'town',
+                badgeClass: 'bg-slate-700/60 text-slate-300 border-slate-600/40',
+                dotClass: 'bg-slate-400'
+            }
+        };
+
+        /**
+         * Состояние настройки партии
+         */
+        const setupState = {
+            players: [],
+            roleCounts: {
+                mafia: 1,
+                prostitute: 0,
+                commissar: 1,
+                doctor: 1,
+                maniac: 0,
+                patrol: 0
+            },
+            // Массив назначений: [{ slotId, roleKey, label, playerName }]
+            slots: []
+        };
+
+        /**
+         * Состояние активной игры
+         */
+        let gameState = null;
+
+        // =========================================================================
+        // 1. ПАРСИНГ ИГРОКОВ И РАСЧЁТ РОЛЕЙ В МЕНЮ
+        // =========================================================================
+
+        const playersInput = document.getElementById('playersInput');
+
+        playersInput.addEventListener('input', () => {
+            parsePlayersFromInput();
+            renderSetupUI();
+        });
+
+        /**
+         * Парсит имена через запятую или построчно, убирая пустые значения и дубликаты
+         */
+        function parsePlayersFromInput() {
+            const raw = playersInput.value || '';
+            const parts = raw
+                .split(/[\n,;]+/)
+                .map(s => s.trim().replace(/\s+/g, ' '))
+                .filter(Boolean);
+
+            const unique = [];
+            const seen = new Set();
+            for (const name of parts) {
+                const lower = name.toLowerCase();
+                if (!seen.has(lower)) {
+                    seen.add(lower);
+                    unique.push(name);
+                }
+            }
+            setupState.players = unique;
+        }
+
+        function fillDemoPlayers() {
+            playersInput.value = 'Алексей, Мария, Дмитрий, Елена\nСергей\nОльга\nИван\nАнна';
+            parsePlayersFromInput();
+            applyRecommendedRoles();
+        }
+
+        /**
+         * Вычисляет рекомендуемое количество мафий по числу игроков
+         */
+        function getRecommendedMafia(total) {
+            if (total < 4) return 1;
+            if (total <= 6) return 1;
+            if (total <= 10) return 2;
+            if (total <= 14) return 3;
+            return Math.max(3, Math.floor(total / 4));
+        }
+
+        /**
+         * Автоматический подбор доступных ролей под текущее количество человек
+         */
+        function applyRecommendedRoles() {
+            const n = setupState.players.length;
+            if (n === 0) {
+                showToast('Сначала введите имена игроков');
+                return;
+            }
+            setupState.roleCounts.mafia = getRecommendedMafia(n);
+            setupState.roleCounts.commissar = n >= 4 ? 1 : 0;
+            setupState.roleCounts.doctor = n >= 5 ? 1 : 0;
+            setupState.roleCounts.prostitute = n >= 7 ? 1 : 0;
+            setupState.roleCounts.maniac = n >= 9 ? 1 : 0;
+            setupState.roleCounts.patrol = n >= 10 ? 1 : 0;
+            renderSetupUI();
+        }
+
+        function changeRoleCount(roleKey, delta) {
+            const totalPlayers = setupState.players.length;
+            const currentVal = setupState.roleCounts[roleKey];
+            const nextVal = currentVal + delta;
+
+            if (nextVal < 0) return;
+            if (roleKey === 'mafia' && nextVal < 1 && totalPlayers >= 3) {
+                showToast('В игре должна быть минимум 1 Мафия');
+                return;
+            }
+
+            // Для спецролей (кроме мафии) обычно максимум 1-2, не превышаем общее число игроков
+            const otherActive = Object.entries(setupState.roleCounts)
+                .filter(([k]) => k !== roleKey)
+                .reduce((acc, [, v]) => acc + v, 0);
+
+            if (totalPlayers > 0 && otherActive + nextVal > totalPlayers) {
+                showToast('Количество ролей не может превышать число игроков');
+                return;
+            }
+
+            setupState.roleCounts[roleKey] = nextVal;
+            renderSetupUI();
+        }
+
+        /**
+         * Синхронизирует список слотов combobox при изменении количества ролей или игроков
+         */
+        function syncRoleSlots() {
+            const orderedKeys = ['mafia', 'prostitute', 'commissar', 'doctor', 'maniac', 'patrol'];
+            const prevBySlotId = new Map(setupState.slots.map(s => [s.slotId, s.playerName]));
+            const validPlayerSet = new Set(setupState.players);
+
+            const newSlots = [];
+            for (const key of orderedKeys) {
+                const count = setupState.roleCounts[key] || 0;
+                for (let i = 1; i <= count; i++) {
+                    const slotId = `${key}_${i}`;
+                    const label = count > 1 ? `${ROLE_DEFS[key].name} #${i}` : ROLE_DEFS[key].name;
+                    let savedPlayer = prevBySlotId.get(slotId) || '';
+                    if (savedPlayer && !validPlayerSet.has(savedPlayer)) {
+                        savedPlayer = '';
+                    }
+                    newSlots.push({
+                        slotId,
+                        roleKey: key,
+                        label,
+                        playerName: savedPlayer
+                    });
+                }
+            }
+
+            // Убираем дубликаты игроков, если один игрок оказался в двух слотах
+            const used = new Set();
+            for (const slot of newSlots) {
+                if (slot.playerName) {
+                    if (used.has(slot.playerName)) {
+                        slot.playerName = '';
+                    } else {
+                        used.add(slot.playerName);
+                    }
+                }
+            }
+
+            setupState.slots = newSlots;
+        }
+
+        function handleSlotSelect(slotId, selectedPlayer) {
+            const target = setupState.slots.find(s => s.slotId === slotId);
+            if (!target) return;
+
+            if (selectedPlayer) {
+                // Если этот игрок был выбран в другом combobox, освобождаем тот слот
+                for (const s of setupState.slots) {
+                    if (s.slotId !== slotId && s.playerName === selectedPlayer) {
+                        s.playerName = '';
+                    }
+                }
+            }
+            target.playerName = selectedPlayer;
+            renderSetupUI();
+        }
+
+        function autoAssignRandomRoles() {
+            if (setupState.players.length === 0) {
+                showToast('Сначала введите список игроков');
+                return;
+            }
+            syncRoleSlots();
+            if (setupState.slots.length > setupState.players.length) {
+                showToast('Игроков меньше, чем выбранных ролей');
+                return;
+            }
+
+            const shuffled = [...setupState.players];
+            for (let i = shuffled.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+            }
+
+            setupState.slots.forEach((slot, idx) => {
+                slot.playerName = shuffled[idx] || '';
+            });
+            renderSetupUI();
+        }
+
+        /**
+         * Отрисовывает весь интерфейс экрана настройки
+         */
+        function renderSetupUI() {
+            const totalPlayers = setupState.players.length;
+            const activeRolesTotal = Object.values(setupState.roleCounts).reduce((a, b) => a + b, 0);
+            const civiliansCount = Math.max(0, totalPlayers - activeRolesTotal);
+            const recMafia = getRecommendedMafia(totalPlayers);
+
+            document.getElementById('playerCountBadge').textContent = `Игроков: ${totalPlayers}`;
+            document.getElementById('statTotalPlayers').textContent = totalPlayers;
+            document.getElementById('statActiveRoles').textContent = activeRolesTotal;
+            document.getElementById('statCivilians').textContent = civiliansCount;
+            document.getElementById('statRecMafia').textContent = totalPlayers > 0 ? recMafia : 0;
+
+            for (const [key, val] of Object.entries(setupState.roleCounts)) {
+                const el = document.getElementById(`count_${key}`);
+                if (el) el.textContent = val;
+            }
+
+            // Чипы распознанных игроков
+            const chipsContainer = document.getElementById('parsedChips');
+            if (totalPlayers === 0) {
+                chipsContainer.innerHTML = `<span class="text-xs text-slate-500">Список пока пуст</span>`;
+            } else {
+                chipsContainer.innerHTML = setupState.players.map((name, i) => `
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200">
+                        <span class="text-slate-500 font-semibold">${i + 1}.</span>
+                        <span>${escapeHtml(name)}</span>
+                    </span>
+                `).join('');
+            }
+
+            // Обновление combobox для ролей
+            syncRoleSlots();
+            const assignedPlayers = new Set(setupState.slots.map(s => s.playerName).filter(Boolean));
+            const comboboxContainer = document.getElementById('roleComboboxList');
+
+            if (setupState.slots.length === 0) {
+                comboboxContainer.innerHTML = `<div class="text-sm text-slate-500">Нет активных ролей для назначения.</div>`;
+            } else {
+                comboboxContainer.innerHTML = setupState.slots.map(slot => {
+                    const def = ROLE_DEFS[slot.roleKey];
+                    const optionsHtml = setupState.players.map(player => {
+                        const isSelectedHere = slot.playerName === player;
+                        const isTakenElsewhere = !isSelectedHere && assignedPlayers.has(player);
+                        return `<option value="${escapeAttr(player)}" ${isSelectedHere ? 'selected' : ''}>
+                            ${escapeHtml(player)}${isTakenElsewhere ? ' (занят)' : ''}
+                        </option>`;
+                    }).join('');
+
+                    return `
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 rounded-xl bg-slate-950 border border-slate-800">
+                            <div class="flex items-center gap-2.5">
+                                <span class="w-2.5 h-2.5 rounded-full ${def.dotClass} shrink-0"></span>
+                                <span class="font-semibold text-sm text-white">${escapeHtml(slot.label)}</span>
+                            </div>
+                            <select onchange="handleSlotSelect('${slot.slotId}', this.value)"
+                                    class="w-full sm:w-64 rounded-lg bg-slate-900 border ${slot.playerName ? 'border-indigo-500/50 text-white' : 'border-slate-700 text-slate-400'} px-3 py-2 text-sm outline-none focus:border-indigo-500">
+                                <option value="">— Выберите игрока —</option>
+                                ${optionsHtml}
+                            </select>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            // Список оставшихся мирных жителей
+            const civPreview = document.getElementById('civiliansPreview');
+            if (totalPlayers === 0) {
+                civPreview.textContent = 'Добавьте игроков выше';
+            } else {
+                const civNames = setupState.players.filter(p => !assignedPlayers.has(p));
+                civPreview.textContent = civNames.length > 0
+                    ? civNames.join(', ')
+                    : 'Все игроки заняли активные роли (мирных жителей нет)';
+            }
+        }
+
+        // =========================================================================
+        // 2. ЗАПУСК ИГРЫ И ДВИЖОК НОЧНЫХ/ДНЕВНЫХ ФАЗ
+        // =========================================================================
+
+        function startGame() {
+            parsePlayersFromInput();
+            const n = setupState.players.length;
+
+            if (n < 3) {
+                showToast('Для игры нужно минимум 3 игрока');
+                return;
+            }
+
+            syncRoleSlots();
+            if (setupState.slots.length > n) {
+                showToast('Выбрано больше ролей, чем игроков за столом');
+                return;
+            }
+
+            const unassigned = setupState.slots.filter(s => !s.playerName);
+            if (unassigned.length > 0) {
+                showToast(`Назначьте игрока на роль: ${unassigned[0].label}`);
+                return;
+            }
+
+            const roleByPlayer = new Map();
+            for (const slot of setupState.slots) {
+                roleByPlayer.set(slot.playerName, slot.roleKey);
+            }
+
+            const players = setupState.players.map((name, idx) => {
+                const roleKey = roleByPlayer.get(name) || 'civilian';
+                return {
+                    id: idx + 1,
+                    name,
+                    roleKey,
+                    alive: true
+                };
+            });
+
+            const showHints = document.getElementById('chkHints').checked;
+            const closedGame = document.getElementById('chkClosedGame').checked;
+
+            gameState = {
+                nightNumber: 1,
+                showHints,
+                closedGame,
+                players,
+                phase: 'night_step', // 'night_step' | 'night_summary' | 'day_vote' | 'game_over'
+                nightQueue: [],
+                nightStepIndex: 0,
+                currentSelection: '',
+                patrolInspected: false,
+                nightActions: {}, // { mafia: target, prostitute: target, commissar: target, doctor: target, maniac: target, patrol: target }
+                nightSummaryItems: [],
+                daySelectedTarget: '',
+                winnerInfo: null
+            };
+
+            document.getElementById('setupScreen').classList.add('hidden');
+            document.getElementById('gameScreen').classList.remove('hidden');
+            document.getElementById('btnResetGame').classList.remove('hidden');
+
+            const closedBadge = document.getElementById('modeClosedBadge');
+            if (closedGame) {
+                closedBadge.classList.remove('hidden');
+            } else {
+                closedBadge.classList.add('hidden');
+            }
+
+            prepareNightQueue();
+            renderGameScreen();
+        }
+
+        /**
+         * Формирует порядок пробуждения ролей на текущую ночь (только живые роли в партии)
+         */
+        function prepareNightQueue() {
+            // Порядок пробуждения: Мафия -> Проститутка -> Комиссар (или Патрульный, если Комиссар убит) -> Доктор -> Маньяк
+            const order = ['mafia', 'prostitute', 'commissar', 'doctor', 'maniac', 'patrol'];
+            const aliveCommissarCount = gameState.players.filter(p => p.alive && p.roleKey === 'commissar').length;
+            const queue = [];
+
+            for (const roleKey of order) {
+                // Патрульный включается в игру только после гибели Комиссара
+                if (roleKey === 'patrol' && aliveCommissarCount > 0) {
+                    continue;
+                }
+                const aliveWithRole = gameState.players.filter(p => p.alive && p.roleKey === roleKey);
+                if (aliveWithRole.length > 0) {
+                    queue.push(roleKey);
+                }
+            }
+
+            gameState.nightQueue = queue;
+            gameState.nightStepIndex = 0;
+            gameState.nightActions = {};
+            gameState.currentSelection = '';
+            gameState.patrolInspected = false;
+            gameState.phase = queue.length > 0 ? 'night_step' : 'night_summary';
+        }
+
+        function selectNightTarget(targetName) {
+            gameState.currentSelection = targetName;
+            gameState.patrolInspected = false;
+            renderGameScreen();
+        }
+
+        /**
+         * Подтверждение выбора текущей ночной роли и переход к следующей
+         */
+        function confirmNightStep() {
+            const roleKey = gameState.nightQueue[gameState.nightStepIndex];
+            if (!gameState.currentSelection) {
+                showToast('Выберите игрока из списка');
+                return;
+            }
+
+            gameState.nightActions[roleKey] = gameState.currentSelection;
+            gameState.currentSelection = '';
+            gameState.patrolInspected = false;
+
+            if (gameState.nightStepIndex + 1 < gameState.nightQueue.length) {
+                gameState.nightStepIndex += 1;
+                renderGameScreen();
+            } else {
+                resolveNightOutcome();
+            }
+        }
+
+        /**
+         * Просчитывает взаимодействия всех ночных ролей и формирует список итогов ночи
+         */
+        function resolveNightOutcome() {
+            const actions = gameState.nightActions;
+            const summary = [];
+            const blockedPlayerName = actions.prostitute || null;
+
+            const isPlayerBlocked = (playerName) => blockedPlayerName && blockedPlayerName === playerName;
+
+            // Вспомогательная проверка: заблокирована ли вся живая мафия
+            const aliveMafia = gameState.players.filter(p => p.alive && p.roleKey === 'mafia');
+            const isMafiaBlocked = aliveMafia.length > 0 && aliveMafia.every(m => isPlayerBlocked(m.name));
+
+            // 1. Действие Проститутки
+            if (actions.prostitute) {
+                summary.push({
+                    roleKey: 'prostitute',
+                    iconColor: 'bg-pink-500',
+                    text: `Проститутка провела ночь у игрока ${actions.prostitute} (действие заблокировано).`
+                });
+            }
+
+            // 2. Действие Мафии
+            let mafiaVictim = null;
+            if (actions.mafia) {
+                if (isMafiaBlocked) {
+                    summary.push({
+                        roleKey: 'mafia',
+                        iconColor: 'bg-rose-500',
+                        text: `Мафия покушалась на игрока ${actions.mafia}, но её ход был заблокирован Проституткой.`
+                    });
+                } else {
+                    mafiaVictim = actions.mafia;
+                    summary.push({
+                        roleKey: 'mafia',
+                        iconColor: 'bg-rose-500',
+                        text: `Мафия выбрала жертвой игрока ${actions.mafia}.`
+                    });
+                }
+            }
+
+            // 3. Действие Комиссара
+            if (actions.commissar) {
+                const commPlayer = gameState.players.find(p => p.alive && p.roleKey === 'commissar');
+                if (commPlayer && isPlayerBlocked(commPlayer.name)) {
+                    summary.push({
+                        roleKey: 'commissar',
+                        iconColor: 'bg-sky-500',
+                        text: `Комиссар хотел проверить игрока ${actions.commissar}, но был заблокирован.`
+                    });
+                } else {
+                    const checkedObj = gameState.players.find(p => p.name === actions.commissar);
+                    const isMaf = checkedObj && checkedObj.roleKey === 'mafia';
+                    summary.push({
+                        roleKey: 'commissar',
+                        iconColor: 'bg-sky-500',
+                        text: `Комиссар проверил игрока ${actions.commissar} (результат: ${isMaf ? 'Мафия' : 'Не мафия'}).`
+                    });
+                }
+            }
+
+            // 4. Действие Доктора
+            let healedTarget = null;
+            if (actions.doctor) {
+                const docPlayer = gameState.players.find(p => p.alive && p.roleKey === 'doctor');
+                if (docPlayer && isPlayerBlocked(docPlayer.name)) {
+                    summary.push({
+                        roleKey: 'doctor',
+                        iconColor: 'bg-emerald-500',
+                        text: `Доктор собирался лечить игрока ${actions.doctor}, но был заблокирован.`
+                    });
+                } else {
+                    healedTarget = actions.doctor;
+                    summary.push({
+                        roleKey: 'doctor',
+                        iconColor: 'bg-emerald-500',
+                        text: `Доктор лечил игрока ${actions.doctor}.`
+                    });
+                }
+            }
+
+            // 5. Действие Маньяка
+            let maniacVictim = null;
+            if (actions.maniac) {
+                const manPlayer = gameState.players.find(p => p.alive && p.roleKey === 'maniac');
+                if (manPlayer && isPlayerBlocked(manPlayer.name)) {
+                    summary.push({
+                        roleKey: 'maniac',
+                        iconColor: 'bg-purple-500',
+                        text: `Маньяк планировал напасть на игрока ${actions.maniac}, но был заблокирован.`
+                    });
+                } else {
+                    maniacVictim = actions.maniac;
+                    summary.push({
+                        roleKey: 'maniac',
+                        iconColor: 'bg-purple-500',
+                        text: `Маньяк напал на игрока ${actions.maniac}.`
+                    });
+                }
+            }
+
+            // 6. Действие Патрульного
+            if (actions.patrol) {
+            // 6. Действие Патрульного (активен после гибели Комиссара и выполняет проверку на мафию)
+            if (actions.patrol) {
+                const patPlayer = gameState.players.find(p => p.alive && p.roleKey === 'patrol');
+                if (patPlayer && isPlayerBlocked(patPlayer.name)) {
+                    summary.push({
+                        roleKey: 'patrol',
+                        iconColor: 'bg-amber-500',
+                        text: `Патрульный хотел проверить игрока ${actions.patrol}, но был заблокирован.`
+                    });
+                } else {
+                    const checkedObj = gameState.players.find(p => p.name === actions.patrol);
+                    const isMaf = checkedObj && checkedObj.roleKey === 'mafia';
+                    summary.push({
+                        roleKey: 'patrol',
+                        iconColor: 'bg-amber-500',
+                        text: `Патрульный (вступивший в игру после гибели Комиссара) проверил игрока ${actions.patrol} (результат: ${isMaf ? 'Мафия' : 'Не мафия'}).`
+                    });
+                }
+            }
+
+            // Подсчёт реальных смертей с учётом лечения Доктора
+            const deadNames = new Set();
+            const savedNames = new Set();
+
+            for (const victim of [mafiaVictim, maniacVictim]) {
+                if (!victim) continue;
+                if (healedTarget === victim) {
+                    savedNames.add(victim);
+                } else {
+                    deadNames.add(victim);
+                }
+            }
+
+            // Применяем смерти к игрокам
+            const eliminatedPlayers = [];
+            for (const name of deadNames) {
+                const pObj = gameState.players.find(p => p.name === name);
+                if (pObj && pObj.alive) {
+                    pObj.alive = false;
+                    eliminatedPlayers.push(pObj);
+                }
+            }
+
+            gameState.nightSummaryItems = summary;
+            gameState.nightEliminated = eliminatedPlayers;
+            gameState.nightSaved = [...savedNames];
+            gameState.phase = 'night_summary';
+            renderGameScreen();
+        }
+
+        /**
+         * Возвращает список ролей, посетивших указанного игрока этой ночью
+         */
+        function getVisitorsForTarget(targetName) {
+            const a = gameState.nightActions;
+            const visitors = [];
+            if (a.mafia === targetName) visitors.push('Мафия');
+            if (a.prostitute === targetName) visitors.push('Проститутка');
+            if (a.commissar === targetName) visitors.push('Комиссар');
+            if (a.doctor === targetName) visitors.push('Доктор');
+            if (a.maniac === targetName) visitors.push('Маньяк');
+            return visitors;
+        }
+
+        /**
+         * Переход после итогов ночи к дневному голосованию (или победе)
+         */
+        function proceedFromNightSummary() {
+            if (checkWinCondition()) {
+                gameState.phase = 'game_over';
+                renderGameScreen();
+                return;
+            }
+            gameState.daySelectedTarget = '';
+            gameState.phase = 'day_vote';
+            renderGameScreen();
+        }
+
+        /**
+         * Завершение дневного голосования и переход к следующей ночи
+         */
+        function confirmDayVote(skipVote = false) {
+            let eliminatedToday = null;
+
+            if (!skipVote) {
+                if (!gameState.daySelectedTarget) {
+                    showToast('Выберите игрока для исключения или нажмите «Никого не выгонять»');
+                    return;
+                }
+                const pObj = gameState.players.find(p => p.name === gameState.daySelectedTarget);
+                if (pObj && pObj.alive) {
+                    pObj.alive = false;
+                    eliminatedToday = pObj;
+                }
+            }
+
+            if (checkWinCondition()) {
+                gameState.lastDayEliminated = eliminatedToday;
+                gameState.phase = 'game_over';
+                renderGameScreen();
+                return;
+            }
+
+            gameState.nightNumber += 1;
+            prepareNightQueue();
+            renderGameScreen();
+        }
+
+        /**
+         * Проверка условий победы (Мирные / Мафия / Маньяк)
+         */
+        function checkWinCondition() {
+            const alive = gameState.players.filter(p => p.alive);
+            const mafiaCount = alive.filter(p => p.roleKey === 'mafia').length;
+            const maniacCount = alive.filter(p => p.roleKey === 'maniac').length;
+            const townCount = alive.filter(p => p.roleKey !== 'mafia' && p.roleKey !== 'maniac').length;
+
+            // 1. Все злодеи уничтожены — победа мирных
+            if (mafiaCount === 0 && maniacCount === 0) {
+                gameState.winnerInfo = {
+                    title: 'Победа Мирных жителей!',
+                    subtitle: 'Вся мафия и опасные одиночки выведены из игры.',
+                    colorClass: 'text-emerald-400'
+                };
+                return true;
+            }
+
+            // 2. Маньяк остался 1 на 1 (или один) без мафии
+            if (mafiaCount === 0 && maniacCount >= 1 && alive.length <= 2) {
+                gameState.winnerInfo = {
+                    title: 'Победа Маньяка!',
+                    subtitle: 'Маньяк пережил всех и захватил город в одиночку.',
+                    colorClass: 'text-purple-400'
+                };
+                return true;
+            }
+
+            // 3. Мафия сравнялась или превзошла остальных (при отсутствии маньяка)
+            if (maniacCount === 0 && mafiaCount >= townCount) {
+                gameState.winnerInfo = {
+                    title: 'Победа Мафии!',
+                    subtitle: 'Мафия получила численное превосходство за столом.',
+                    colorClass: 'text-rose-400'
+                };
+                return true;
+            }
+
+            return false;
+        }
+
+        // =========================================================================
+        // 3. ОТРИСОВКА ИГРОВЫХ ДИАЛОГОВЫХ ОКОН
+        // =========================================================================
+
+        function renderGameScreen() {
+            const alivePlayers = gameState.players.filter(p => p.alive);
+
+            // Обновляем список живых за столом
+            document.getElementById('aliveCountLabel').textContent = `${alivePlayers.length} из ${gameState.players.length} в игре`;
+            document.getElementById('alivePlayersChips').innerHTML = gameState.players.map(p => {
+                if (p.alive) {
+                    return `<span class="px-3 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs sm:text-sm text-slate-200 font-medium">${escapeHtml(p.name)}</span>`;
+                }
+                return `<span class="px-3 py-1 rounded-lg bg-slate-950/40 border border-slate-900 text-xs sm:text-sm text-slate-600 line-through">${escapeHtml(p.name)}</span>`;
+            }).join('');
+
+            // Обновляем шпаргалку ведущего
+            document.getElementById('hostRosterGrid').innerHTML = gameState.players.map(p => {
+                const def = ROLE_DEFS[p.roleKey];
+                return `
+                    <div class="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 ${p.alive ? '' : 'opacity-45'}">
+                        <span class="text-xs sm:text-sm font-semibold text-white truncate">${escapeHtml(p.name)}</span>
+                        <span class="text-[11px] font-medium px-2 py-0.5 rounded-md border ${def.badgeClass} shrink-0">${def.name}</span>
+                    </div>
+                `;
+            }).join('');
+
+            const phaseBadge = document.getElementById('phaseBadge');
+            const subTitle = document.getElementById('dialogSubTitle');
+            const title = document.getElementById('dialogTitle');
+            const body = document.getElementById('dialogBody');
+
+            // ---------------------------------------------------------------------
+            // РЕЖИМ A: ПОШАГОВЫЙ НОЧНОЙ ДИАЛОГ РОЛИ
+            // ---------------------------------------------------------------------
+            if (gameState.phase === 'night_step') {
+                const roleKey = gameState.nightQueue[gameState.nightStepIndex];
+                const def = ROLE_DEFS[roleKey];
+                const actors = gameState.players.filter(p => p.alive && p.roleKey === roleKey).map(p => p.name);
+
+                phaseBadge.textContent = `Ночь ${gameState.nightNumber} • Шаг ${gameState.nightStepIndex + 1}/${gameState.nightQueue.length}`;
+                subTitle.textContent = `Ночь ${gameState.nightNumber} • ${def.wakeTitle}`;
+                title.textContent = `Ночь ${gameState.nightNumber}. ${def.wakeTitle}`;
+
+                // Для патрульного/комиссара можно проверять всех живых (кроме самого себя, если нужно)
+                const candidateTargets = alivePlayers.filter(p => {
+                    if (roleKey === 'commissar' || roleKey === 'patrol' || roleKey === 'prostitute') {
+                        return p.roleKey !== roleKey;
+                    }
+                    return true;
+                });
+
+                const hintBlock = gameState.showHints ? `
+                    <div class="rounded-2xl bg-indigo-500/10 border border-indigo-500/30 p-4 space-y-1.5">
+                        <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-indigo-300">
+                            <span>Речь и подсказка для ведущего</span>
+                        </div>
+                        <p class="text-sm sm:text-base font-medium text-white italic">${def.speech}</p>
+                        <p class="text-xs text-slate-300 pt-1">${def.hostHint}</p>
+                    </div>
+                ` : `
+                    <div class="rounded-2xl bg-slate-950/90 border border-slate-800 p-4">
+                        <p class="text-sm sm:text-base font-medium text-slate-200 italic">${def.speech}</p>
+                    </div>
+                `;
+
+                // Мгновенная подсказка результата для Комиссара и Патрульного при выборе цели
+                let instantCheckHtml = '';
+                if (gameState.currentSelection && (roleKey === 'commissar' || roleKey === 'patrol')) {
+                    const targetObj = gameState.players.find(p => p.name === gameState.currentSelection);
+                    const isMafia = targetObj && targetObj.roleKey === 'mafia';
+                    const roleTitle = roleKey === 'commissar' ? 'Комиссара' : 'Патрульного';
+                    instantCheckHtml = `
+                        <div class="rounded-xl p-3.5 border ${isMafia ? 'bg-rose-500/15 border-rose-500/40 text-rose-200' : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-200'} text-sm font-semibold">
+                            Результат проверки для ${roleTitle}: игрок <u>${escapeHtml(gameState.currentSelection)}</u> — ${isMafia ? 'МАФИЯ (кивните)' : 'НЕ МАФИЯ (покажите отрицательный жест)'}.
+                        </div>
+                    `;
+                }
+
+                body.innerHTML = `
+                    <div class="flex flex-wrap items-center gap-2 text-xs sm:text-sm text-slate-300">
+                        <span class="text-slate-400">Игрок за ролью:</span>
+                        <span class="px-2.5 py-1 rounded-lg border font-semibold ${def.badgeClass}">${escapeHtml(actors.join(', '))}</span>
+                    </div>
+
+                    ${hintBlock}
+
+                    <div class="space-y-2.5">
+                        <label class="block text-sm font-semibold text-slate-200">${def.actionLabel}</label>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                            ${candidateTargets.map(p => {
+                                const isSel = gameState.currentSelection === p.name;
+                                return `
+                                    <button type="button" onclick="selectNightTarget('${escapeAttr(p.name)}')"
+                                            class="p-3.5 rounded-xl border text-left font-semibold text-sm transition-all flex items-center justify-between ${
+                                                isSel
+                                                    ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-600/20'
+                                                    : 'bg-slate-950 hover:bg-slate-800/80 border-slate-800 text-slate-200'
+                                            }">
+                                        <span>${escapeHtml(p.name)}</span>
+                                        ${isSel ? '<span class="text-xs font-bold px-2 py-0.5 rounded bg-white/20">Выбрано</span>' : ''}
+                                    </button>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+
+                    ${instantCheckHtml}
+
+                    <div class="pt-2 flex justify-end">
+                        <button type="button" onclick="confirmNightStep()"
+                                class="w-full sm:w-auto px-6 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-lg shadow-indigo-600/25 transition-all">
+                            Подтвердить выбор и продолжить →
+                        </button>
+                    </div>
+                `;
+                return;
+            }
+
+            // ---------------------------------------------------------------------
+            // РЕЖИМ B: ИТОГИ НОЧИ («ГОРОД ПРОСЫПАЕТСЯ»)
+            // ---------------------------------------------------------------------
+            if (gameState.phase === 'night_summary') {
+                phaseBadge.textContent = `Утро после Ночи ${gameState.nightNumber}`;
+                subTitle.textContent = `Ночь ${gameState.nightNumber} • Итоги ночи`;
+                title.textContent = `Ночь ${gameState.nightNumber}. Итоги ночи — «Город просыпается»`;
+
+                const eliminated = gameState.nightEliminated || [];
+                const saved = gameState.nightSaved || [];
+
+                // Объявление для игроков (учитывает чекбокс «Закрытая игра»)
+                let publicAnnouncementHtml = '';
+                if (eliminated.length === 0) {
+                    publicAnnouncementHtml = `
+                        <div class="rounded-2xl bg-emerald-500/15 border border-emerald-500/35 p-4 text-emerald-200">
+                            <div class="font-bold text-base">Этой ночью никто не погиб!</div>
+                            <p class="text-xs sm:text-sm text-emerald-300/90 mt-1">Все жители города проснулись в полном составе.</p>
+                        </div>
+                    `;
+                } else {
+                    const listItems = eliminated.map(p => {
+                        const roleSuffix = gameState.closedGame
+                            ? '<span class="text-amber-300/90 text-xs ml-2">(роль не раскрывается — закрытая игра)</span>'
+                            : `<span class="text-rose-200 font-bold ml-1.5">— ${ROLE_DEFS[p.roleKey].name}</span>`;
+                        return `<li class="text-sm sm:text-base font-semibold text-white">• ${escapeHtml(p.name)}${roleSuffix}</li>`;
+                    }).join('');
+
+                    publicAnnouncementHtml = `
+                        <div class="rounded-2xl bg-rose-500/15 border border-rose-500/35 p-4 space-y-2">
+                            <div class="font-bold text-base text-rose-200">Этой ночью город покинули:</div>
+                            <ul class="space-y-1">${listItems}</ul>
+                        </div>
+                    `;
+                }
+
+                // Подробный список действий каждой роли для ведущего
+                const actionsListHtml = gameState.nightSummaryItems.map(item => `
+                    <li class="flex items-start gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800">
+                        <span class="w-2.5 h-2.5 rounded-full ${item.iconColor} mt-1.5 shrink-0"></span>
+                        <span class="text-sm text-slate-200">${escapeHtml(item.text)}</span>
+                    </li>
+                `).join('');
+
+                const savedNote = saved.length > 0
+                    ? `<div class="text-xs text-emerald-400 font-medium">Доктор успешно спас этой ночью: ${escapeHtml(saved.join(', '))}</div>`
+                    : '';
+
+                body.innerHTML = `
+                    ${publicAnnouncementHtml}
+                    ${savedNote}
+
+                    <div class="space-y-2.5">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">
+                            Хроника ночи (какая роль что сделала):
+                        </h3>
+                        <ul class="space-y-2">
+                            ${actionsListHtml || '<li class="text-sm text-slate-400">Ночных действий не совершалось.</li>'}
+                        </ul>
+                    </div>
+
+                    <div class="pt-2 flex justify-end">
+                        <button type="button" onclick="proceedFromNightSummary()"
+                                class="w-full sm:w-auto px-6 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-lg shadow-indigo-600/25 transition-all">
+                            Перейти к дневному обсуждению →
+                        </button>
+                    </div>
+                `;
+                return;
+            }
+
+            // ---------------------------------------------------------------------
+            // РЕЖИМ C: ДНЕВНОЕ ОБСУЖДЕНИЕ И ГОЛОСОВАНИЕ
+            // ---------------------------------------------------------------------
+            if (gameState.phase === 'day_vote') {
+                phaseBadge.textContent = `День ${gameState.nightNumber}`;
+                subTitle.textContent = `День ${gameState.nightNumber} • Голосование города`;
+                title.textContent = `День ${gameState.nightNumber}. Дневное голосование`;
+
+                const hintHtml = gameState.showHints ? `
+                    <div class="rounded-2xl bg-indigo-500/10 border border-indigo-500/30 p-4 text-xs sm:text-sm text-slate-300">
+                        Дайте игрокам время обсудить события ночи и выставить кандидатуры. Выберите игрока, за которого проголосовало большинство, или пропустите голосование, если голоса разделились.
+                    </div>
+                ` : '';
+
+                body.innerHTML = `
+                    ${hintHtml}
+
+                    <div class="space-y-2.5">
+                        <label class="block text-sm font-semibold text-slate-200">Кого город выгоняет на голосовании:</label>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                            ${alivePlayers.map(p => {
+                                const isSel = gameState.daySelectedTarget === p.name;
+                                return `
+                                    <button type="button" onclick="selectDayTarget('${escapeAttr(p.name)}')"
+                                            class="p-3.5 rounded-xl border text-left font-semibold text-sm transition-all flex items-center justify-between ${
+                                                isSel
+                                                    ? 'bg-rose-600 border-rose-400 text-white shadow-lg shadow-rose-600/20'
+                                                    : 'bg-slate-950 hover:bg-slate-800/80 border-slate-800 text-slate-200'
+                                            }">
+                                        <span>${escapeHtml(p.name)}</span>
+                                        ${isSel ? '<span class="text-xs font-bold px-2 py-0.5 rounded bg-white/20">На вылет</span>' : ''}
+                                    </button>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+
+                    <div class="pt-2 flex flex-col sm:flex-row items-center justify-end gap-3">
+                        <button type="button" onclick="confirmDayVote(true)"
+                                class="w-full sm:w-auto px-5 py-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-sm transition-colors">
+                            Никого не выгонять (наступить Ночи ${gameState.nightNumber + 1})
+                        </button>
+                        <button type="button" onclick="confirmDayVote(false)"
+                                class="w-full sm:w-auto px-6 py-3.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-sm shadow-lg shadow-rose-600/25 transition-all">
+                            Исключить выбранного игрока →
+                        </button>
+                    </div>
+                `;
+                return;
+            }
+
+            // ---------------------------------------------------------------------
+            // РЕЖИМ D: ФИНАЛ ИГРЫ И РАСКРЫТИЕ ВСЕХ РОЛЕЙ
+            // ---------------------------------------------------------------------
+            if (gameState.phase === 'game_over') {
+                const win = gameState.winnerInfo;
+                phaseBadge.textContent = 'Игра окончена';
+                subTitle.textContent = 'Финал партии';
+                title.textContent = win.title;
+
+                const finalRosterHtml = gameState.players.map(p => {
+                    const def = ROLE_DEFS[p.roleKey];
+                    return `
+                        <div class="flex items-center justify-between gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800">
+                            <div class="flex items-center gap-2.5">
+                                <span class="text-sm font-bold ${p.alive ? 'text-white' : 'text-slate-500 line-through'}">${escapeHtml(p.name)}</span>
+                                <span class="text-[11px] ${p.alive ? 'text-emerald-400' : 'text-slate-500'}">${p.alive ? 'выжил' : 'выбыл'}</span>
+                            </div>
+                            <span class="text-xs font-semibold px-2.5 py-1 rounded-lg border ${def.badgeClass}">${def.name}</span>
+                        </div>
+                    `;
+                }).join('');
+
+                body.innerHTML = `
+                    <div class="rounded-2xl bg-slate-950 border border-slate-800 p-5 space-y-1">
+                        <div class="text-lg font-extrabold ${win.colorClass}">${win.title}</div>
+                        <p class="text-sm text-slate-300">${win.subtitle}</p>
+                    </div>
+
+                    <div class="space-y-2.5">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Итоговое распределение ролей:</h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            ${finalRosterHtml}
+                        </div>
+                    </div>
+
+                    <div class="pt-2 flex flex-col sm:flex-row justify-end gap-3">
+                        <button type="button" onclick="resetToMenu()"
+                                class="w-full sm:w-auto px-6 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-lg shadow-indigo-600/25 transition-all">
+                            Новая игра (в меню)
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
+        function selectDayTarget(name) {
+            gameState.daySelectedTarget = name;
+            renderGameScreen();
+        }
+
+        // =========================================================================
+        // 4. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ UI
+        // =========================================================================
+
+        function toggleRosterDrawer() {
+            const panel = document.getElementById('hostRosterPanel');
+            panel.classList.toggle('hidden');
+        }
+
+        function confirmResetToMenu() {
+            document.getElementById('resetModal').classList.remove('hidden');
+        }
+
+        function closeResetModal() {
+            document.getElementById('resetModal').classList.add('hidden');
+        }
+
+        function resetToMenu() {
+            closeResetModal();
+            gameState = null;
+            document.getElementById('gameScreen').classList.add('hidden');
+            document.getElementById('btnResetGame').classList.add('hidden');
+            document.getElementById('hostRosterPanel').classList.add('hidden');
+            document.getElementById('setupScreen').classList.remove('hidden');
+            renderSetupUI();
+        }
+
+        let toastTimeout = null;
+        function showToast(msg) {
+            const box = document.getElementById('toastBox');
+            const content = document.getElementById('toastContent');
+            content.textContent = msg;
+            box.classList.remove('opacity-0', '-translate-y-2');
+            box.classList.add('opacity-100', 'translate-y-0');
+
+            clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => {
+                box.classList.remove('opacity-100', 'translate-y-0');
+                box.classList.add('opacity-0', '-translate-y-2');
+            }, 3000);
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        function escapeAttr(str) {
+            return String(str).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        }
+
+        // Инициализация экрана при загрузке
+        renderSetupUI();
+    </script>
+</body>
+</html>
