@@ -1555,9 +1555,9 @@
                 });
             }
 
-            function startBuild(typeId, isQuickPlay = false) {
+            function startBuild(typeId, isQuickPlay = false, isFreeRestart = false) {
                 const tier = BUILDING_TYPES[typeId] || BUILDING_TYPES.blue;
-                if (!isQuickPlay) {
+                if (!isQuickPlay && !isFreeRestart) {
                     if (state.money < tier.buildCost) {
                         sfx.miss();
                         showBanner(`НЕ ХВАТАЕТ ДЕНЕГ ($${tier.buildCost})`, 2.0);
@@ -4012,12 +4012,7 @@
                 }
 
                 drawArcadeButton('build_restart', W - 110, 13, 32, 38, '↻', 'gold', () => {
-                    if (!b.isQuickPlay && state.money < b.tier.buildCost) {
-                        sfx.miss();
-                        showBanner(`НУЖНО $${b.tier.buildCost} ДЛЯ ПЕРЕЗАПУСКА`, 2.0);
-                        return;
-                    }
-                    startBuild(b.tier.id, b.isQuickPlay);
+                    startBuild(b.tier.id, b.isQuickPlay, true);
                 }, 16);
 
                 drawArcadeButton('build_mute', W - 75, 13, 32, 38, '', 'dark', () => {
@@ -4205,9 +4200,9 @@
                     my + 98,
                     mw - 36,
                     48,
-                    b.isQuickPlay ? 'ПОПРОБОВАТЬ СНОВА' : `ЗАНОВО ($${b.tier.buildCost})`,
-                    canRetry ? 'gold' : 'dark',
-                    canRetry ? () => startBuild(b.tier.id, b.isQuickPlay) : null,
+                    b.isQuickPlay ? 'ПОПРОБОВАТЬ СНОВА' : 'ЗАНОВО (БЕСПЛАТНО)',
+                    'gold',
+                    () => startBuild(b.tier.id, b.isQuickPlay, true),
                     14
                 );
 
